@@ -35,6 +35,7 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 | `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                |
 | `AI_MODEL`                | `moondream`                  | Ollama model name (e.g. `moondream`, `llava`)             |
 | `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call        |
+| `OLLAMA_READY_TIMEOUT_SECONDS` | `120`                  | Max seconds to wait for Ollama API readiness at startup    |
 | `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review       |
 
 Copy `.env.example` to `.env` and edit values before running.
