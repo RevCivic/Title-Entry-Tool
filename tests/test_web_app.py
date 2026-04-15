@@ -8,6 +8,7 @@ from web_app import (
     allowed_file,
     create_app,
     extract_text_from_upload,
+    get_port_from_environment,
     parse_extracted_fields,
 )
 
@@ -48,6 +49,18 @@ class WebAppParsingTests(unittest.TestCase):
         self.assertEqual("", extract_text_from_upload("sample", b"x"))
         pdf_mock.assert_called_once_with(b"x")
         image_mock.assert_called_once_with(b"x")
+
+    @mock.patch.dict("os.environ", {"PORT": "5050"}, clear=True)
+    def test_get_port_from_environment_reads_valid_port(self) -> None:
+        self.assertEqual(5050, get_port_from_environment())
+
+    @mock.patch.dict("os.environ", {"PORT": "invalid"}, clear=True)
+    def test_get_port_from_environment_falls_back_for_invalid_value(self) -> None:
+        self.assertEqual(8000, get_port_from_environment())
+
+    @mock.patch.dict("os.environ", {"PORT": "70000"}, clear=True)
+    def test_get_port_from_environment_falls_back_for_out_of_range_value(self) -> None:
+        self.assertEqual(8000, get_port_from_environment())
 
     @mock.patch("web_app.pytesseract.image_to_string", return_value="ocr image text")
     @mock.patch("web_app.Image.open")

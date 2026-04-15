@@ -1,4 +1,5 @@
 import io
+import os
 import re
 from typing import Dict, Optional, Union
 
@@ -17,6 +18,7 @@ ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}
 DEFAULT_STATE = "NM"
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MISSING_YEAR_SENTINEL = 0
+DEFAULT_PORT = 8000
 
 VIN_PATTERN = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
 YEAR_PATTERN = re.compile(r"\b(18[8-9]\d|19\d{2}|20\d{2}|21\d{2})\b")
@@ -102,6 +104,15 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
     return _extract_text_from_image(file_bytes)
 
 
+def get_port_from_environment(default_port: int = DEFAULT_PORT) -> int:
+    port_value = os.getenv("PORT", str(default_port)).strip()
+    try:
+        port = int(port_value)
+    except ValueError:
+        return default_port
+    return port if 1 <= port <= 65535 else default_port
+
+
 def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -177,4 +188,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=get_port_from_environment())

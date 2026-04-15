@@ -38,7 +38,13 @@ pip install -r requirements.txt
 python web_app.py
 ```
 
-Then open `http://localhost:8000`.
+To run on a different port:
+
+```bash
+PORT=5000 python web_app.py
+```
+
+Then open `http://localhost:<PORT>` (defaults to `8000`).
 
 ### Run with Docker
 
