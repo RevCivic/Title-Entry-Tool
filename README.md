@@ -52,3 +52,9 @@ Then open `http://localhost:8000` (or your configured port).
 docker build -t title-entry-tool .
 docker run --rm -p 8000:8000 -v "$(pwd)":/app title-entry-tool
 ```
+
+### Run with Docker Compose
+
+```bash
+docker compose up --build
+```
