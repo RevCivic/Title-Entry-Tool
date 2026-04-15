@@ -15,6 +15,8 @@ from title_entry_tool import (
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}
 DEFAULT_STATE = "NM"
+MAX_UPLOAD_BYTES = 16 * 1024 * 1024
+MISSING_YEAR_SENTINEL = 0
 
 VIN_PATTERN = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
 YEAR_PATTERN = re.compile(r"\b(18[8-9]\d|19\d{2}|20\d{2}|21\d{2})\b")
@@ -91,7 +93,10 @@ def _extract_text_from_image(file_bytes: bytes) -> str:
 
 
 def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
-    extension = filename.rsplit(".", 1)[1].lower()
+    parts = filename.rsplit(".", 1)
+    if len(parts) != 2:
+        return ""
+    extension = parts[1].lower()
     if extension == "pdf":
         return _extract_text_from_pdf(file_bytes)
     return _extract_text_from_image(file_bytes)
@@ -99,7 +104,7 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
 
 def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
-    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+    app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.config["DB_PATH"] = db_path
     app.config["DEFAULT_STATE"] = default_state.strip().upper()
 
@@ -135,7 +140,7 @@ def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -
             state = state_override or fields["state"] or app.config["DEFAULT_STATE"]
             title_number = fields["title_number"] or ""
             vin = fields["vin"] or ""
-            vehicle_year = fields["vehicle_year"] or 0
+            vehicle_year = fields["vehicle_year"] or MISSING_YEAR_SENTINEL
 
             connection = create_connection(app.config["DB_PATH"])
             try:
