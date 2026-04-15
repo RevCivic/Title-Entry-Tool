@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Title Entry Tool</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+      form { display: grid; gap: 0.75rem; padding: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+      .ok { color: #1e7a1e; }
+      .err { color: #aa2222; }
+      table { border-collapse: collapse; margin-top: 1rem; }
+      th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+    </style>
+  </head>
+  <body>
+    <h1>Title Entry Tool</h1>
+    <p>Upload a title PDF or image to extract and validate title data.</p>
+
+    <form method="post" enctype="multipart/form-data">
+      <label>
+        State override (optional, 2 letters):
+        <input type="text" name="state" maxlength="2" />
+      </label>
+      <label>
+        PDF/Image file:
+        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
+      </label>
+      <button type="submit">Extract and Save</button>
+    </form>
+
+    {% if message %}
+      <p class="ok">{{ message }}</p>
+    {% endif %}
+    {% if error %}
+      <p class="err">{{ error }}</p>
+    {% endif %}
+
+    {% if fields %}
+      <h2>Extracted Fields</h2>
+      <table>
+        <tr><th>State</th><td>{{ fields.state }}</td></tr>
+        <tr><th>Title Number</th><td>{{ fields.title_number }}</td></tr>
+        <tr><th>VIN</th><td>{{ fields.vin }}</td></tr>
+        <tr><th>Vehicle Year</th><td>{{ fields.vehicle_year }}</td></tr>
+      </table>
+    {% endif %}
+
+    {% if record %}
+      <h2>Validation Result</h2>
+      <table>
+        <tr><th>Record ID</th><td>{{ record.id }}</td></tr>
+        <tr><th>Validated</th><td>{{ record.is_validated }}</td></tr>
+        <tr><th>Errors</th><td>{{ record.validation_errors|join(', ') }}</td></tr>
+      </table>
+    {% endif %}
+  </body>
+</html>
