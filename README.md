@@ -44,7 +44,7 @@ To run on a different port:
 PORT=5000 python web_app.py
 ```
 
-Then open `http://localhost:<PORT>` (defaults to `8000`).
+Then open `http://localhost:8000` (or your configured port).
 
 ### Run with Docker
 
