@@ -13,6 +13,20 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: "24h"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   title-entry-tool:
     build:
       context: .
@@ -27,6 +41,11 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DEFAULT_STATE: ${DEFAULT_STATE:-NM}
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-hybrid}
+      AI_ENDPOINT: ${AI_ENDPOINT:-http://ollama:11434}
+      AI_MODEL: ${AI_MODEL:-moondream}
+      AI_TIMEOUT: ${AI_TIMEOUT:-60}
+      AI_CONFIDENCE_THRESHOLD: ${AI_CONFIDENCE_THRESHOLD:-0.6}
     volumes:
       - app_data:/app/data
     depends_on:
@@ -36,3 +55,4 @@ services:
 volumes:
   postgres_data:
   app_data:
+  ollama_data:

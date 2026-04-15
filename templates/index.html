@@ -7,8 +7,9 @@
     <style>
       body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
       form { display: grid; gap: 0.75rem; padding: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-      .ok { color: #1e7a1e; }
-      .err { color: #aa2222; }
+      .ok   { color: #1e7a1e; }
+      .err  { color: #aa2222; }
+      .warn { color: #cc7a00; }
       table { border-collapse: collapse; margin-top: 1rem; }
       th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
     </style>
@@ -44,6 +45,37 @@
         <tr><th>VIN</th><td>{{ fields.vin }}</td></tr>
         <tr><th>Vehicle Year</th><td>{{ fields.vehicle_year }}</td></tr>
       </table>
+    {% endif %}
+
+    {% if extraction_info %}
+      <h2>Extraction Details</h2>
+      <table>
+        <tr>
+          <th>Source</th>
+          <td>{{ extraction_info.source | upper }}</td>
+        </tr>
+      </table>
+
+      <h3>Field Confidence</h3>
+      <table>
+        <tr><th>Field</th><th>Confidence</th></tr>
+        {% for field, conf in extraction_info.confidence.items() %}
+        <tr>
+          <td>{{ field }}</td>
+          <td class="{{ 'err' if field in extraction_info.low_confidence else 'ok' }}">
+            {{ (conf * 100) | round | int }}%
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+
+      {% if extraction_info.low_confidence %}
+        <p class="warn">
+          &#9888; Low confidence on:
+          <strong>{{ extraction_info.low_confidence | join(', ') }}</strong>.
+          Please verify these fields before submitting.
+        </p>
+      {% endif %}
     {% endif %}
 
     {% if record %}

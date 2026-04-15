@@ -1,13 +1,14 @@
 import io
 import os
 import re
-from typing import Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import fitz
 import pytesseract
 from flask import Flask, render_template, request
 from PIL import Image
 
+from ai_extraction import extract_fields_with_ai
 from title_entry_tool import (
     create_connection_from_env,
     initialize_database,
@@ -19,6 +20,15 @@ DEFAULT_STATE = "NM"
 MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MISSING_YEAR_SENTINEL = 0
 DEFAULT_PORT = 8000
+
+# Extraction provider: "tesseract" | "ai" | "hybrid" (default)
+EXTRACTION_PROVIDER = os.getenv("EXTRACTION_PROVIDER", "hybrid").lower().strip()
+try:
+    AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.6"))
+except ValueError:
+    AI_CONFIDENCE_THRESHOLD = 0.6
+
+_FIELD_NAMES: Tuple[str, ...] = ("state", "title_number", "vin", "vehicle_year")
 
 VIN_PATTERN = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
 YEAR_PATTERN = re.compile(r"\b(18[8-9]\d|19\d{2}|20\d{2}|21\d{2})\b")
@@ -104,6 +114,97 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
     return _extract_text_from_image(file_bytes)
 
 
+def _tesseract_fields_and_confidence(
+    text: str,
+) -> Tuple[Dict[str, Any], Dict[str, float]]:
+    """Run regex parsing on OCR text and assign a nominal confidence."""
+    fields = parse_extracted_fields(text) if text else {f: None for f in _FIELD_NAMES}
+    confidence = {f: (0.7 if fields.get(f) is not None else 0.0) for f in _FIELD_NAMES}
+    return fields, confidence
+
+
+def _run_extraction(
+    filename: str,
+    file_bytes: bytes,
+    provider: str = EXTRACTION_PROVIDER,
+    threshold: float = AI_CONFIDENCE_THRESHOLD,
+) -> Optional[Dict[str, Any]]:
+    """Run extraction using the configured provider.
+
+    Returns a dict with:
+        fields          – {state, title_number, vin, vehicle_year}
+        raw_text        – OCR/extracted text for database storage
+        source          – "ai" | "tesseract" | "hybrid" | "hybrid-fallback"
+        confidence      – per-field float confidence dict
+        low_confidence  – list of field names below *threshold*
+
+    Returns None when no text or data could be extracted at all.
+    """
+    raw_text = extract_text_from_upload(filename, file_bytes)
+
+    ai_result = None
+    if provider in ("ai", "hybrid"):
+        try:
+            ai_result = extract_fields_with_ai(filename, file_bytes)
+        except Exception:
+            ai_result = None
+
+    if provider == "tesseract":
+        if not raw_text:
+            return None
+        fields, confidence = _tesseract_fields_and_confidence(raw_text)
+        source = "tesseract"
+    else:
+        # "ai" or "hybrid"
+        if ai_result is None and not raw_text:
+            return None
+
+        if ai_result is None:
+            # AI unavailable – fall back to Tesseract
+            fields, confidence = _tesseract_fields_and_confidence(raw_text)
+            source = "tesseract"
+        elif provider == "ai":
+            fields = {f: ai_result.get(f) for f in _FIELD_NAMES}
+            confidence = ai_result.get("confidence", {f: 0.0 for f in _FIELD_NAMES})
+            source = "ai"
+        else:
+            # hybrid: use AI where confident, Tesseract elsewhere
+            tesseract_fields, tesseract_conf = _tesseract_fields_and_confidence(raw_text or "")
+            fields = {}
+            confidence = {}
+            ai_used = False
+            tess_used = False
+            ai_conf_map = ai_result.get("confidence", {})
+            for field in _FIELD_NAMES:
+                ai_val = ai_result.get(field)
+                ai_conf = ai_conf_map.get(field, 0.0)
+                if ai_val is not None and ai_conf >= threshold:
+                    fields[field] = ai_val
+                    confidence[field] = ai_conf
+                    ai_used = True
+                else:
+                    fields[field] = tesseract_fields.get(field)
+                    confidence[field] = tesseract_conf.get(field, 0.0)
+                    tess_used = True
+            if ai_used and tess_used:
+                source = "hybrid"
+            elif ai_used:
+                source = "ai"
+            else:
+                source = "tesseract"
+
+    low_confidence: List[str] = [
+        f for f in _FIELD_NAMES if confidence.get(f, 0.0) < threshold
+    ]
+    return {
+        "fields": fields,
+        "raw_text": raw_text or "",
+        "source": source,
+        "confidence": confidence,
+        "low_confidence": low_confidence,
+    }
+
+
 def get_port_from_environment(default_port: int = DEFAULT_PORT) -> int:
     port_value = os.getenv("PORT", str(default_port)).strip()
     try:
@@ -125,6 +226,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             "error": None,
             "record": None,
             "fields": None,
+            "extraction_info": None,
         }
         if request.method == "POST":
             state_override = request.form.get("state", "").strip().upper()
@@ -141,16 +243,17 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 context["error"] = "Uploaded file is empty."
                 return render_template("index.html", **context)
 
-            extracted_text = extract_text_from_upload(upload.filename, file_bytes)
-            if not extracted_text:
+            extraction = _run_extraction(upload.filename, file_bytes)
+            if extraction is None:
                 context["error"] = "No text could be extracted from the file."
                 return render_template("index.html", **context)
 
-            fields = parse_extracted_fields(extracted_text)
-            state = state_override or fields["state"] or app.config["DEFAULT_STATE"]
-            title_number = fields["title_number"] or ""
-            vin = fields["vin"] or ""
-            vehicle_year = fields["vehicle_year"] or MISSING_YEAR_SENTINEL
+            fields = extraction["fields"]
+            state = state_override or fields.get("state") or app.config["DEFAULT_STATE"]
+            title_number = fields.get("title_number") or ""
+            vin = fields.get("vin") or ""
+            vehicle_year = fields.get("vehicle_year") or MISSING_YEAR_SENTINEL
+            extracted_text = extraction["raw_text"]
 
             connection = create_connection_from_env()
             try:
@@ -173,6 +276,11 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 "vehicle_year": vehicle_year,
             }
             context["record"] = record
+            context["extraction_info"] = {
+                "source": extraction["source"],
+                "confidence": extraction["confidence"],
+                "low_confidence": extraction["low_confidence"],
+            }
             if record["is_validated"]:
                 context["message"] = "Record extracted, validated, and saved."
             else:
