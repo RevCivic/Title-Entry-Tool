@@ -105,7 +105,7 @@ class WebAppParsingTests(unittest.TestCase):
         image_to_string_mock.assert_called_once()
 
     def test_index_route_rejects_missing_file(self) -> None:
-        app = create_app(":memory:")
+        app = create_app()
         app.testing = True
         client = app.test_client()
 
@@ -114,7 +114,7 @@ class WebAppParsingTests(unittest.TestCase):
 
     @mock.patch("web_app.insert_title_record")
     @mock.patch("web_app.initialize_database")
-    @mock.patch("web_app.create_connection")
+    @mock.patch("web_app.create_connection_from_env")
     @mock.patch("web_app.extract_text_from_upload", return_value="VIN 1HGCM82633A004352 YEAR 2003 TITLE ABC1234")
     def test_index_route_processes_upload(
         self,
@@ -127,7 +127,7 @@ class WebAppParsingTests(unittest.TestCase):
         create_connection_mock.return_value = connection
         insert_mock.return_value = {"id": 1, "is_validated": True, "validation_errors": []}
 
-        app = create_app(":memory:")
+        app = create_app()
         app.testing = True
         client = app.test_client()
 

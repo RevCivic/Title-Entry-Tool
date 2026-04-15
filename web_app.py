@@ -9,7 +9,7 @@ from flask import Flask, render_template, request
 from PIL import Image
 
 from title_entry_tool import (
-    create_connection,
+    create_connection_from_env,
     initialize_database,
     insert_title_record,
 )
@@ -113,10 +113,9 @@ def get_port_from_environment(default_port: int = DEFAULT_PORT) -> int:
     return port if 1 <= port <= 65535 else default_port
 
 
-def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -> Flask:
+def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
-    app.config["DB_PATH"] = db_path
     app.config["DEFAULT_STATE"] = default_state.strip().upper()
 
     @app.route("/", methods=["GET", "POST"])
@@ -153,7 +152,7 @@ def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -
             vin = fields["vin"] or ""
             vehicle_year = fields["vehicle_year"] or MISSING_YEAR_SENTINEL
 
-            connection = create_connection(app.config["DB_PATH"])
+            connection = create_connection_from_env()
             try:
                 initialize_database(connection)
                 record = insert_title_record(

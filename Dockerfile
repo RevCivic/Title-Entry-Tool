@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+ARG PORT=8000
+ENV PORT=${PORT}
+EXPOSE ${PORT}
 
 CMD ["python", "web_app.py"]
