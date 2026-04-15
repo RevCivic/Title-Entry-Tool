@@ -5,12 +5,29 @@ from unittest import mock
 from web_app import (
     _extract_text_from_image,
     _extract_text_from_pdf,
+    _run_extraction,
+    _tesseract_fields_and_confidence,
     allowed_file,
     create_app,
     extract_text_from_upload,
     get_port_from_environment,
     parse_extracted_fields,
 )
+
+_GOOD_VIN = "1HGCM82633A004352"
+_GOOD_OCR = f"VIN {_GOOD_VIN} YEAR 2003 TITLE ABC1234"
+_GOOD_EXTRACTION = {
+    "fields": {
+        "state": None,
+        "title_number": "ABC1234",
+        "vin": _GOOD_VIN,
+        "vehicle_year": 2003,
+    },
+    "raw_text": _GOOD_OCR,
+    "source": "tesseract",
+    "confidence": {"state": 0.0, "title_number": 0.7, "vin": 0.7, "vehicle_year": 0.7},
+    "low_confidence": ["state"],
+}
 
 
 class WebAppParsingTests(unittest.TestCase):
@@ -115,10 +132,10 @@ class WebAppParsingTests(unittest.TestCase):
     @mock.patch("web_app.insert_title_record")
     @mock.patch("web_app.initialize_database")
     @mock.patch("web_app.create_connection_from_env")
-    @mock.patch("web_app.extract_text_from_upload", return_value="VIN 1HGCM82633A004352 YEAR 2003 TITLE ABC1234")
+    @mock.patch("web_app._run_extraction", return_value=_GOOD_EXTRACTION)
     def test_index_route_processes_upload(
         self,
-        extract_mock: mock.Mock,
+        extraction_mock: mock.Mock,
         create_connection_mock: mock.Mock,
         initialize_database_mock: mock.Mock,
         insert_mock: mock.Mock,
@@ -139,10 +156,183 @@ class WebAppParsingTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertIn(b"Record extracted, validated, and saved.", response.data)
-        extract_mock.assert_called_once()
+        extraction_mock.assert_called_once()
         initialize_database_mock.assert_called_once_with(connection)
         insert_mock.assert_called_once()
         connection.close.assert_called_once()
+
+    @mock.patch("web_app.insert_title_record")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    @mock.patch("web_app._run_extraction", return_value=_GOOD_EXTRACTION)
+    def test_index_route_includes_extraction_info_in_response(
+        self,
+        _extraction_mock: mock.Mock,
+        create_connection_mock: mock.Mock,
+        _initialize_mock: mock.Mock,
+        insert_mock: mock.Mock,
+    ) -> None:
+        create_connection_mock.return_value = mock.Mock()
+        insert_mock.return_value = {"id": 2, "is_validated": True, "validation_errors": []}
+
+        app = create_app()
+        app.testing = True
+        client = app.test_client()
+
+        response = client.post(
+            "/",
+            data={"file": (BytesIO(b"fake"), "title.png"), "state": "NM"},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"TESSERACT", response.data)
+        self.assertIn(b"Field Confidence", response.data)
+
+    @mock.patch("web_app._run_extraction", return_value=None)
+    def test_index_route_shows_error_when_extraction_returns_none(
+        self,
+        _extraction_mock: mock.Mock,
+    ) -> None:
+        app = create_app()
+        app.testing = True
+        client = app.test_client()
+
+        response = client.post(
+            "/",
+            data={"file": (BytesIO(b"fake"), "title.png")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertIn(b"No text could be extracted from the file.", response.data)
+
+
+class RunExtractionTests(unittest.TestCase):
+    """Tests for _run_extraction provider selection logic."""
+
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_tesseract_provider_returns_parsed_fields(
+        self, _ocr_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="tesseract")
+        self.assertIsNotNone(result)
+        self.assertEqual("tesseract", result["source"])
+        self.assertEqual(_GOOD_VIN, result["fields"]["vin"])
+        self.assertEqual(2003, result["fields"]["vehicle_year"])
+
+    @mock.patch("web_app.extract_text_from_upload", return_value="")
+    def test_tesseract_provider_returns_none_when_no_text(
+        self, _ocr_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="tesseract")
+        self.assertIsNone(result)
+
+    @mock.patch(
+        "web_app.extract_fields_with_ai",
+        return_value={
+            "state": "NM",
+            "title_number": "ABC1234",
+            "vin": _GOOD_VIN,
+            "vehicle_year": 2003,
+            "confidence": {
+                "state": 0.9,
+                "title_number": 0.85,
+                "vin": 0.95,
+                "vehicle_year": 0.9,
+            },
+        },
+    )
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_ai_provider_uses_ai_fields(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="ai")
+        self.assertIsNotNone(result)
+        self.assertEqual("ai", result["source"])
+        self.assertEqual("NM", result["fields"]["state"])
+        self.assertEqual([], result["low_confidence"])
+
+    @mock.patch("web_app.extract_fields_with_ai", return_value=None)
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_ai_provider_falls_back_to_tesseract_when_ai_unavailable(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="ai")
+        self.assertIsNotNone(result)
+        self.assertEqual("tesseract", result["source"])
+        self.assertEqual(_GOOD_VIN, result["fields"]["vin"])
+
+    @mock.patch("web_app.extract_fields_with_ai", return_value=None)
+    @mock.patch("web_app.extract_text_from_upload", return_value="")
+    def test_extraction_returns_none_when_ai_and_text_both_missing(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="hybrid")
+        self.assertIsNone(result)
+
+    @mock.patch(
+        "web_app.extract_fields_with_ai",
+        return_value={
+            "state": "TX",
+            "title_number": "XYZ999",
+            "vin": _GOOD_VIN,
+            "vehicle_year": 2020,
+            "confidence": {
+                "state": 0.9,
+                "title_number": 0.8,
+                "vin": 0.95,
+                "vehicle_year": 0.9,
+            },
+        },
+    )
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_hybrid_provider_uses_ai_for_high_confidence_fields(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="hybrid", threshold=0.6)
+        self.assertIsNotNone(result)
+        self.assertIn(result["source"], ("ai", "hybrid"))
+        self.assertEqual("TX", result["fields"]["state"])
+        self.assertEqual(_GOOD_VIN, result["fields"]["vin"])
+
+    @mock.patch(
+        "web_app.extract_fields_with_ai",
+        return_value={
+            "state": None,
+            "title_number": None,
+            "vin": None,
+            "vehicle_year": None,
+            "confidence": {
+                "state": 0.0,
+                "title_number": 0.0,
+                "vin": 0.0,
+                "vehicle_year": 0.0,
+            },
+        },
+    )
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_hybrid_provider_falls_back_to_tesseract_for_all_low_confidence(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="hybrid", threshold=0.6)
+        self.assertIsNotNone(result)
+        self.assertEqual("tesseract", result["source"])
+        self.assertEqual(_GOOD_VIN, result["fields"]["vin"])
+
+    @mock.patch("web_app.extract_fields_with_ai", side_effect=RuntimeError("boom"))
+    @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
+    def test_hybrid_provider_handles_ai_exception(
+        self, _ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="hybrid")
+        self.assertIsNotNone(result)
+        self.assertEqual("tesseract", result["source"])
+
+    def test_tesseract_fields_and_confidence_assigns_nominal_confidence(self) -> None:
+        fields, conf = _tesseract_fields_and_confidence(_GOOD_OCR)
+        self.assertEqual(_GOOD_VIN, fields["vin"])
+        self.assertEqual(0.7, conf["vin"])
+        self.assertEqual(0.0, conf["state"])
 
 
 if __name__ == "__main__":
