@@ -1,8 +1,12 @@
 import csv
+import os
 import re
-import sqlite3
 from datetime import datetime
 from typing import Dict, List, Optional
+
+import psycopg2
+import psycopg2.extensions
+import psycopg2.extras
 
 VIN_ALLOWED = set("0123456789ABCDEFGHJKLMNPRSTUVWXYZ")
 VIN_TRANSLITERATION = {
@@ -34,28 +38,46 @@ VIN_TRANSLITERATION = {
 VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
 
 
-def create_connection(db_path: str) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+def create_connection_from_env() -> psycopg2.extensions.connection:
+    """Create a Postgres connection using environment variables.
 
-
-def initialize_database(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS title_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            state TEXT NOT NULL,
-            title_number TEXT NOT NULL,
-            vin TEXT NOT NULL,
-            vehicle_year INTEGER NOT NULL,
-            ocr_text TEXT,
-            is_validated INTEGER NOT NULL,
-            validation_errors TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
+    Environment variables:
+        DB_HOST     – hostname of the Postgres server (default: localhost)
+        DB_PORT     – port number (default: 5432)
+        DB_NAME     – database name (default: titles)
+        DB_USER     – database user (default: postgres)
+        DB_PASSWORD – database password (default: empty string)
+    """
+    try:
+        port = int(os.getenv("DB_PORT", "5432"))
+    except ValueError:
+        port = 5432
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=port,
+        dbname=os.getenv("DB_NAME", "titles"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", ""),
     )
+
+
+def initialize_database(connection: psycopg2.extensions.connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS title_records (
+                id SERIAL PRIMARY KEY,
+                state TEXT NOT NULL,
+                title_number TEXT NOT NULL,
+                vin TEXT NOT NULL,
+                vehicle_year INTEGER NOT NULL,
+                ocr_text TEXT,
+                is_validated INTEGER NOT NULL,
+                validation_errors TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
     connection.commit()
 
 
@@ -119,7 +141,7 @@ def validate_record(
 
 
 def insert_title_record(
-    connection: sqlite3.Connection,
+    connection: psycopg2.extensions.connection,
     state: str,
     title_number: str,
     vin: str,
@@ -131,41 +153,46 @@ def insert_title_record(
     errors = validate_record(normalized_title_number, normalized_vin, vehicle_year)
     validation_errors = " | ".join(errors) if errors else None
 
-    cursor = connection.execute(
-        """
-        INSERT INTO title_records (
-            state, title_number, vin, vehicle_year, ocr_text,
-            is_validated, validation_errors, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            state.strip().upper(),
-            normalized_title_number,
-            normalized_vin,
-            vehicle_year,
-            ocr_text,
-            0 if errors else 1,
-            validation_errors,
-            datetime.utcnow().isoformat(),
-        ),
-    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO title_records (
+                state, title_number, vin, vehicle_year, ocr_text,
+                is_validated, validation_errors, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                state.strip().upper(),
+                normalized_title_number,
+                normalized_vin,
+                vehicle_year,
+                ocr_text,
+                0 if errors else 1,
+                validation_errors,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        row_id = cursor.fetchone()[0]
     connection.commit()
     return {
-        "id": cursor.lastrowid,
+        "id": row_id,
         "is_validated": not errors,
         "validation_errors": errors,
     }
 
 
-def export_validated_to_csv(connection: sqlite3.Connection, csv_path: str) -> int:
-    rows = connection.execute(
-        """
-        SELECT state, title_number, vin, vehicle_year
-        FROM title_records
-        WHERE is_validated = 1
-        ORDER BY id ASC
-        """
-    ).fetchall()
+def export_validated_to_csv(connection: psycopg2.extensions.connection, csv_path: str) -> int:
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute(
+            """
+            SELECT state, title_number, vin, vehicle_year
+            FROM title_records
+            WHERE is_validated = 1
+            ORDER BY id ASC
+            """
+        )
+        rows = cursor.fetchall()
 
     with open(csv_path, "w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(

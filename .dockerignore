@@ -4,3 +4,4 @@ __pycache__/
 .github/
 .pytest_cache/
 *.db
+.env
