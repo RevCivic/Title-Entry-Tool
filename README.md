@@ -35,6 +35,7 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 | `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                |
 | `AI_MODEL`                | `moondream`                  | Ollama model name (e.g. `moondream`, `llava`)             |
 | `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call        |
+| `OLLAMA_READY_TIMEOUT_SECONDS` | `120`                  | Max seconds to wait for Ollama API readiness at startup    |
 | `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review       |
 
 Copy `.env.example` to `.env` and edit values before running.
@@ -80,25 +81,26 @@ Then open `http://localhost:8000` (or your configured port).
 
 ### Run with Docker Compose (recommended)
 
-**Tesseract only (no AI):**
-
 ```bash
 cp .env.example .env   # edit credentials as needed
 docker compose up --build
 ```
 
-**With AI (Ollama + moondream model):**
+This starts PostgreSQL, the Flask app, and Ollama automatically. The Ollama
+container auto-pulls the configured model (`AI_MODEL`, default `moondream`) on
+startup, so no manual `ollama pull ...` step is required.
+
+> On first startup, model download can take a few minutes depending on network
+> speed.
+
+#### Optional GPU for AI service
+
+If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed, enable GPU
+assignment for Ollama with the provided override file:
 
 ```bash
-cp .env.example .env
-docker compose --profile ai up --build
-# Pull the vision model inside the Ollama container (first run only):
-docker compose exec ollama ollama pull moondream
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
-
-This starts a PostgreSQL container, the app container, and (with `--profile ai`)
-an Ollama container.  The app gracefully falls back to Tesseract if Ollama is
-unavailable, so you can start without the `ai` profile and add it later.
 
 Data is persisted in the `postgres_data` and `ollama_data` named volumes.
 Application artifacts (e.g. exported CSVs) are stored in the `app_data` named
