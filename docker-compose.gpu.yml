@@ -1,3 +1,4 @@
 services:
   ollama:
+    # Assign all available GPUs to Ollama (override to a specific device if needed).
     gpus: all

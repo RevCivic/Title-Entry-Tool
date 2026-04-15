@@ -21,10 +21,27 @@ services:
       - |
         ollama serve &
         OLLAMA_PID=$!
+        ready_timeout_seconds="${OLLAMA_READY_TIMEOUT_SECONDS:-120}"
+        elapsed_seconds=0
         until ollama list >/dev/null 2>&1; do
+          if ! kill -0 "$OLLAMA_PID" 2>/dev/null; then
+            echo "Ollama server process exited before becoming ready." >&2
+            wait "$OLLAMA_PID"
+            exit 1
+          fi
+          elapsed_seconds=$((elapsed_seconds + 2))
+          if [ "$elapsed_seconds" -ge "$ready_timeout_seconds" ]; then
+            echo "Ollama API did not become ready within ${ready_timeout_seconds}s." >&2
+            wait "$OLLAMA_PID"
+            exit 1
+          fi
           sleep 2
         done
-        ollama pull "${AI_MODEL:-moondream}"
+        if ! ollama pull "${AI_MODEL:-moondream}"; then
+          echo "Failed to pull model: ${AI_MODEL:-moondream} (check model name, network access, and available disk space)." >&2
+          wait "$OLLAMA_PID"
+          exit 1
+        fi
         wait "$OLLAMA_PID"
     volumes:
       - ollama_data:/root/.ollama
@@ -32,10 +49,10 @@ services:
       OLLAMA_KEEP_ALIVE: "24h"
       AI_MODEL: ${AI_MODEL:-moondream}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags | grep -q '\"name\":\"${AI_MODEL:-moondream}'"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags | grep -q \"\\\"name\\\":\\\"$${AI_MODEL}\""]
+      interval: 15s
       timeout: 10s
-      retries: 10
+      retries: 8
       start_period: 60s
 
   title-entry-tool:
