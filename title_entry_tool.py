@@ -2,9 +2,10 @@ import csv
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
 
 VIN_ALLOWED = set("0123456789ABCDEFGHJKLMNPRSTUVWXYZ")
@@ -37,7 +38,7 @@ VIN_TRANSLITERATION = {
 VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
 
 
-def create_connection_from_env() -> Any:
+def create_connection_from_env() -> psycopg2.extensions.connection:
     """Create a Postgres connection using environment variables.
 
     Environment variables:
@@ -47,16 +48,20 @@ def create_connection_from_env() -> Any:
         DB_USER     – database user (default: postgres)
         DB_PASSWORD – database password (default: empty string)
     """
+    try:
+        port = int(os.getenv("DB_PORT", "5432"))
+    except ValueError:
+        port = 5432
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "5432")),
+        port=port,
         dbname=os.getenv("DB_NAME", "titles"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", ""),
     )
 
 
-def initialize_database(connection: Any) -> None:
+def initialize_database(connection: psycopg2.extensions.connection) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -136,7 +141,7 @@ def validate_record(
 
 
 def insert_title_record(
-    connection: Any,
+    connection: psycopg2.extensions.connection,
     state: str,
     title_number: str,
     vin: str,
@@ -177,7 +182,7 @@ def insert_title_record(
     }
 
 
-def export_validated_to_csv(connection: Any, csv_path: str) -> int:
+def export_validated_to_csv(connection: psycopg2.extensions.connection, csv_path: str) -> int:
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(
             """
