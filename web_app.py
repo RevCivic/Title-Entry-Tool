@@ -1,6 +1,6 @@
 import io
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 import fitz
 import pytesseract
@@ -14,6 +14,7 @@ from title_entry_tool import (
 )
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}
+DEFAULT_STATE = "NM"
 
 VIN_PATTERN = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
 YEAR_PATTERN = re.compile(r"\b(18[8-9]\d|19\d{2}|20\d{2}|21\d{2})\b")
@@ -28,7 +29,7 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def parse_extracted_fields(text: str) -> Dict[str, Optional[object]]:
+def parse_extracted_fields(text: str) -> Dict[str, Optional[Union[str, int]]]:
     upper_text = text.upper()
     vin_match = VIN_PATTERN.search(upper_text)
     year_match = YEAR_PATTERN.search(upper_text)
@@ -96,10 +97,11 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
     return _extract_text_from_image(file_bytes)
 
 
-def create_app(db_path: str = "titles.db") -> Flask:
+def create_app(db_path: str = "titles.db", default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
     app.config["DB_PATH"] = db_path
+    app.config["DEFAULT_STATE"] = default_state.strip().upper()
 
     @app.route("/", methods=["GET", "POST"])
     def index():
@@ -130,7 +132,7 @@ def create_app(db_path: str = "titles.db") -> Flask:
                 return render_template("index.html", **context)
 
             fields = parse_extracted_fields(extracted_text)
-            state = state_override or fields["state"] or "NM"
+            state = state_override or fields["state"] or app.config["DEFAULT_STATE"]
             title_number = fields["title_number"] or ""
             vin = fields["vin"] or ""
             vehicle_year = fields["vehicle_year"] or 0
