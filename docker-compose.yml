@@ -15,16 +15,27 @@ services:
 
   ollama:
     image: ollama/ollama:latest
-    profiles: ["ai"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        ollama serve &
+        OLLAMA_PID=$!
+        until ollama list >/dev/null 2>&1; do
+          sleep 2
+        done
+        ollama pull "${AI_MODEL:-moondream}"
+        wait "$OLLAMA_PID"
     volumes:
       - ollama_data:/root/.ollama
     environment:
       OLLAMA_KEEP_ALIVE: "24h"
+      AI_MODEL: ${AI_MODEL:-moondream}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags | grep -q '\"name\":\"${AI_MODEL:-moondream}'"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 10
       start_period: 60s
 
   title-entry-tool:
@@ -50,6 +61,8 @@ services:
       - app_data:/app/data
     depends_on:
       postgres:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
 
 volumes:
