@@ -35,7 +35,6 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 | `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                |
 | `AI_MODEL`                | `moondream`                  | Ollama model name (e.g. `moondream`, `llava`)             |
 | `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call        |
-| `OLLAMA_READY_TIMEOUT_SECONDS` | `120`                  | Max seconds to wait for Ollama API readiness at startup    |
 | `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review       |
 
 Copy `.env.example` to `.env` and edit values before running.
@@ -83,28 +82,63 @@ Then open `http://localhost:8000` (or your configured port).
 
 ```bash
 cp .env.example .env   # edit credentials as needed
+```
+
+#### First 5 minutes – core services only (immediate)
+
+```bash
 docker compose up --build
 ```
 
-This starts PostgreSQL, the Flask app, and Ollama automatically. The Ollama
-container auto-pulls the configured model (`AI_MODEL`, default `moondream`) on
-startup, so no manual `ollama pull ...` step is required.
+This starts PostgreSQL and the Flask app.  The app is ready to accept uploads
+immediately using OCR (Tesseract) extraction.  Open `http://localhost:8000`.
 
-> On first startup, model download can take a few minutes depending on network
-> speed.
+#### Add AI-assisted extraction
+
+When you are ready to enable the AI vision model, start the `ai` profile:
+
+```bash
+docker compose --profile ai up --build
+```
+
+This adds two services:
+- **`ollama`** – runs the Ollama server (starts immediately).
+- **`ollama-init`** – downloads the configured model (`AI_MODEL`, default
+  `moondream`) in the background.  The app continues working with OCR while the
+  download completes (~2–4 GB on first run).
+
+The status bar at the top of the UI shows the current extraction mode and
+whether AI is ready. Once the model download finishes, AI-assisted extraction
+activates automatically on the next upload.
+
+> **Disk space:** allocate at least 5 GB for the `ollama_data` volume
+> (`moondream` is ~1.5 GB; larger models such as `llava` require ~4 GB).
+
+> **Image pinning:** the compose file uses `ollama/ollama:latest`.  For
+> production deployments, pin to a specific release, e.g.
+> `image: ollama/ollama:0.6.8`, to prevent unexpected upgrades.
 
 #### Optional GPU for AI service
 
-If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed, enable GPU
-assignment for Ollama with the provided override file:
+If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up --build
 ```
 
 Data is persisted in the `postgres_data` and `ollama_data` named volumes.
 Application artifacts (e.g. exported CSVs) are stored in the `app_data` named
 volume mounted at `/app/data`.
+
+### Health and status endpoints
+
+| Endpoint      | Description                                                   |
+|---------------|---------------------------------------------------------------|
+| `GET /health` | Returns `{"status": "ok"}` when the Flask app is running.    |
+| `GET /api/status` | Returns the configured extraction provider and current AI readiness (`ready` \| `unavailable` \| `not_configured`). |
+
+The container healthcheck polls `/health` so orchestrators (Docker Compose,
+Kubernetes, etc.) can detect real application readiness.
 
 ### Run tests
 

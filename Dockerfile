@@ -18,4 +18,7 @@ ARG PORT=8000
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python /app/healthcheck.py
+
 CMD ["python", "web_app.py"]

@@ -1,11 +1,13 @@
 import io
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import fitz
 import pytesseract
-from flask import Flask, render_template, request
+import requests
+from flask import Flask, jsonify, render_template, request
 from PIL import Image
 
 from ai_extraction import extract_fields_with_ai
@@ -27,6 +29,41 @@ try:
     AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.6"))
 except ValueError:
     AI_CONFIDENCE_THRESHOLD = 0.6
+
+# AI readiness cache – avoids a network probe on every page load.
+_AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
+_AI_STATUS_TTL = 30.0  # seconds between live probes
+
+
+def _check_ai_status() -> str:
+    """Probe the configured AI endpoint and return its readiness.
+
+    Returns one of:
+        "not_configured" – provider is "tesseract"; AI calls are never made.
+        "ready"          – Ollama API responded successfully.
+        "unavailable"    – AI is configured but the endpoint did not respond.
+
+    Results are cached for ``_AI_STATUS_TTL`` seconds so repeated page loads
+    don't each make a separate network call.
+    """
+    now = time.monotonic()
+    if now - float(_AI_STATUS_CACHE["checked_at"]) < _AI_STATUS_TTL:
+        return str(_AI_STATUS_CACHE["status"])
+
+    if EXTRACTION_PROVIDER == "tesseract":
+        status = "not_configured"
+    else:
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        try:
+            response = requests.get(f"{endpoint}/api/tags", timeout=1)
+            response.raise_for_status()
+            status = "ready"
+        except Exception:
+            status = "unavailable"
+
+    _AI_STATUS_CACHE["status"] = status
+    _AI_STATUS_CACHE["checked_at"] = now
+    return status
 
 _FIELD_NAMES: Tuple[str, ...] = ("state", "title_number", "vin", "vehicle_year")
 
@@ -218,6 +255,19 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.config["DEFAULT_STATE"] = default_state.strip().upper()
+
+    @app.route("/health")
+    def health():
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/status")
+    def api_status():
+        return jsonify(
+            {
+                "extraction_provider": EXTRACTION_PROVIDER,
+                "ai_status": _check_ai_status(),
+            }
+        )
 
     @app.route("/", methods=["GET", "POST"])
     def index():
