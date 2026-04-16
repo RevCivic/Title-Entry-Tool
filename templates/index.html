@@ -12,10 +12,20 @@
       .warn { color: #cc7a00; }
       table { border-collapse: collapse; margin-top: 1rem; }
       th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+      #status-bar { display: flex; gap: 1.5rem; padding: 0.5rem 0.75rem; background: #f5f5f5;
+                    border: 1px solid #ddd; border-radius: 4px; margin-bottom: 1rem;
+                    font-size: 0.875rem; flex-wrap: wrap; }
+      #status-bar span { display: inline-flex; align-items: center; gap: 0.35rem; }
     </style>
   </head>
   <body>
     <h1>Title Entry Tool</h1>
+
+    <div id="status-bar" aria-label="Service status">
+      <span><strong>Mode:</strong> <span id="provider-label">…</span></span>
+      <span><strong>AI:</strong> <span id="ai-label">checking…</span></span>
+    </div>
+
     <p>Upload a title PDF or image to extract and validate title data.</p>
 
     <form method="post" enctype="multipart/form-data">
@@ -86,5 +96,32 @@
         <tr><th>Errors</th><td>{{ record.validation_errors|join(', ') }}</td></tr>
       </table>
     {% endif %}
+
+    <script>
+      (function () {
+        fetch('/api/status')
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            document.getElementById('provider-label').textContent =
+              data.extraction_provider.toUpperCase();
+
+            var aiSpan = document.getElementById('ai-label');
+            if (data.ai_status === 'ready') {
+              aiSpan.textContent = '\u2713 Ready';
+              aiSpan.style.color = '#1e7a1e';
+            } else if (data.ai_status === 'not_configured') {
+              aiSpan.textContent = '\u2014 OCR only';
+              aiSpan.style.color = '#555';
+            } else {
+              aiSpan.textContent = '\u26a0 Unavailable \u2014 OCR fallback active';
+              aiSpan.style.color = '#cc7a00';
+            }
+          })
+          .catch(function () {
+            document.getElementById('provider-label').textContent = 'unknown';
+            document.getElementById('ai-label').textContent = '\u2014 status unavailable';
+          });
+      }());
+    </script>
   </body>
 </html>

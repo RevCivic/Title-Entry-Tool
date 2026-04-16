@@ -1,8 +1,10 @@
+import json
 import unittest
 from io import BytesIO
 from unittest import mock
 
 from web_app import (
+    _check_ai_status,
     _extract_text_from_image,
     _extract_text_from_pdf,
     _run_extraction,
@@ -333,6 +335,79 @@ class RunExtractionTests(unittest.TestCase):
         self.assertEqual(_GOOD_VIN, fields["vin"])
         self.assertEqual(0.7, conf["vin"])
         self.assertEqual(0.0, conf["state"])
+
+
+class HealthAndStatusEndpointTests(unittest.TestCase):
+    def test_health_endpoint_returns_ok(self) -> None:
+        app = create_app()
+        app.testing = True
+        client = app.test_client()
+
+        response = client.get("/health")
+
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("ok", data["status"])
+
+    @mock.patch("web_app._check_ai_status", return_value="unavailable")
+    def test_api_status_returns_provider_and_ai_status(self, _mock: mock.Mock) -> None:
+        app = create_app()
+        app.testing = True
+        client = app.test_client()
+
+        response = client.get("/api/status")
+
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("extraction_provider", data)
+        self.assertIn("ai_status", data)
+        self.assertEqual("unavailable", data["ai_status"])
+
+    @mock.patch("web_app._check_ai_status", return_value="ready")
+    def test_api_status_returns_ready_when_ai_reachable(self, _mock: mock.Mock) -> None:
+        app = create_app()
+        app.testing = True
+        client = app.test_client()
+
+        response = client.get("/api/status")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("ready", json.loads(response.data)["ai_status"])
+
+    @mock.patch("web_app.EXTRACTION_PROVIDER", "tesseract")
+    @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
+    def test_check_ai_status_returns_not_configured_for_tesseract(self) -> None:
+        import web_app as _wa
+
+        status = _check_ai_status()
+        self.assertEqual("not_configured", status)
+        self.assertEqual("not_configured", _wa._AI_STATUS_CACHE["status"])
+        self.assertGreater(float(_wa._AI_STATUS_CACHE["checked_at"]), 0.0)
+
+    @mock.patch("web_app.EXTRACTION_PROVIDER", "hybrid")
+    @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
+    @mock.patch("web_app.requests.get")
+    def test_check_ai_status_returns_ready_when_endpoint_responds(
+        self, get_mock: mock.Mock
+    ) -> None:
+        import web_app as _wa
+
+        get_mock.return_value = mock.Mock()
+        status = _check_ai_status()
+        self.assertEqual("ready", status)
+        self.assertEqual("ready", _wa._AI_STATUS_CACHE["status"])
+
+    @mock.patch("web_app.EXTRACTION_PROVIDER", "hybrid")
+    @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
+    @mock.patch("web_app.requests.get", side_effect=ConnectionError("refused"))
+    def test_check_ai_status_returns_unavailable_when_endpoint_unreachable(
+        self, _get_mock: mock.Mock
+    ) -> None:
+        import web_app as _wa
+
+        status = _check_ai_status()
+        self.assertEqual("unavailable", status)
+        self.assertEqual("unavailable", _wa._AI_STATUS_CACHE["status"])
 
 
 if __name__ == "__main__":
