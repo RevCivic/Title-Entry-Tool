@@ -4,12 +4,14 @@ from io import BytesIO
 from unittest import mock
 
 from web_app import (
+    _apply_word_confidence,
     _check_ai_status,
     _docker_client,
     _extract_text_from_image,
     _extract_text_from_pdf,
     _get_service_containers,
     _get_service_logs,
+    _get_word_confidences,
     _run_extraction,
     _start_ai_services,
     _tesseract_fields_and_confidence,
@@ -60,6 +62,25 @@ class WebAppParsingTests(unittest.TestCase):
         fields = parse_extracted_fields(text)
         self.assertEqual("ZX90077", fields["title_number"])
 
+    def test_parse_extracted_fields_finds_8digit_title_number(self) -> None:
+        # 8-digit numeric title numbers are common; they should be found without
+        # a TITLE label when no labeled value is present.
+        text = f"VIN {_GOOD_VIN} YEAR 2007 58312391"
+        fields = parse_extracted_fields(text)
+        self.assertEqual("58312391", fields["title_number"])
+
+    def test_parse_extracted_fields_corrects_ocr_noise_in_8digit_title(self) -> None:
+        # O→0 and I→1 are common OCR misreads in numeric title numbers.
+        text = f"VIN {_GOOD_VIN} YEAR 2007 5831239I"
+        fields = parse_extracted_fields(text)
+        self.assertEqual("58312391", fields["title_number"])
+
+    def test_parse_extracted_fields_8digit_does_not_override_labeled_title(self) -> None:
+        # An explicitly labeled TITLE NUMBER should always win.
+        text = f"TITLE NUMBER: ABC1234 58312391 VIN {_GOOD_VIN} YEAR 2007"
+        fields = parse_extracted_fields(text)
+        self.assertEqual("ABC1234", fields["title_number"])
+
     @mock.patch("web_app._extract_text_from_pdf", return_value="pdf text")
     @mock.patch("web_app._extract_text_from_image", return_value="image text")
     def test_extract_text_from_upload_routes_by_extension(
@@ -92,11 +113,13 @@ class WebAppParsingTests(unittest.TestCase):
         image_open_mock: mock.Mock,
         image_to_string_mock: mock.Mock,
     ) -> None:
-        fake_image = object()
+        from PIL import Image as _Image
+
+        fake_image = _Image.new("RGB", (100, 80), color=(200, 200, 200))
         image_open_mock.return_value = fake_image
         result = _extract_text_from_image(b"img-bytes")
         self.assertEqual("ocr image text", result)
-        image_to_string_mock.assert_called_once_with(fake_image)
+        image_to_string_mock.assert_called_once()
 
     @mock.patch("web_app.pytesseract.image_to_string", return_value="ocr fallback text")
     @mock.patch("web_app.Image.open")
@@ -389,6 +412,41 @@ class RunExtractionTests(unittest.TestCase):
         self.assertEqual(_GOOD_VIN, fields["vin"])
         self.assertEqual(0.7, conf["vin"])
         self.assertEqual(0.0, conf["state"])
+
+
+class WordConfidenceTests(unittest.TestCase):
+    def test_get_word_confidences_returns_empty_dict_on_non_image(self) -> None:
+        result = _get_word_confidences(b"not-an-image")
+        self.assertIsInstance(result, dict)
+        self.assertEqual({}, result)
+
+    def test_apply_word_confidence_overrides_nominal_when_word_found(self) -> None:
+        fields = {"state": None, "title_number": "ABC123", "vin": _GOOD_VIN, "vehicle_year": 2003}
+        confidence = {"state": 0.0, "title_number": 0.7, "vin": 0.7, "vehicle_year": 0.7}
+        word_conf = {"ABC123": 0.92, "2003": 0.88}
+        _apply_word_confidence(fields, confidence, word_conf)
+        self.assertAlmostEqual(0.92, confidence["title_number"])
+        self.assertAlmostEqual(0.88, confidence["vehicle_year"])
+        # VIN not in word_conf → stays at nominal 0.7
+        self.assertAlmostEqual(0.7, confidence["vin"])
+        # state is None → stays at 0.0
+        self.assertAlmostEqual(0.0, confidence["state"])
+
+    def test_apply_word_confidence_ignores_none_values(self) -> None:
+        fields = {"state": None, "title_number": None, "vin": None, "vehicle_year": None}
+        confidence = {"state": 0.0, "title_number": 0.0, "vin": 0.0, "vehicle_year": 0.0}
+        word_conf = {"SOMETHING": 0.9}
+        _apply_word_confidence(fields, confidence, word_conf)
+        for f in confidence:
+            self.assertAlmostEqual(0.0, confidence[f])
+
+    def test_apply_word_confidence_does_not_raise_on_empty_word_conf(self) -> None:
+        fields = {"state": "NM", "title_number": "ABC123", "vin": _GOOD_VIN, "vehicle_year": 2003}
+        confidence = {"state": 0.7, "title_number": 0.7, "vin": 0.7, "vehicle_year": 0.7}
+        _apply_word_confidence(fields, confidence, {})
+        # Nothing changed
+        for f in confidence:
+            self.assertAlmostEqual(0.7, confidence[f])
 
 
 class HealthAndStatusEndpointTests(unittest.TestCase):

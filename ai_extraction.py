@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import fitz
 import requests
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 # ---------------------------------------------------------------------------
 # Type alias
@@ -27,12 +27,12 @@ ExtractionResult = Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 DEFAULT_AI_ENDPOINT = "http://ollama:11434"
-DEFAULT_AI_MODEL = "moondream"
+DEFAULT_AI_MODEL = "llava"
 DEFAULT_AI_TIMEOUT = 60
 DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.6
 
 # Maximum image dimension sent to the model (pixels on the longer side).
-_MAX_IMAGE_DIMENSION = 1200
+_MAX_IMAGE_DIMENSION = 2000
 
 # ---------------------------------------------------------------------------
 # Extraction prompt
@@ -72,7 +72,7 @@ _VIN_PATTERN = re.compile(r"[^A-HJ-NPR-Z0-9]")
 
 
 def _normalize_image(image: Image.Image, max_dimension: int = _MAX_IMAGE_DIMENSION) -> Image.Image:
-    """Correct orientation, resize, and enhance contrast for better extraction."""
+    """Correct orientation, resize, sharpen, and enhance contrast for better extraction."""
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
@@ -83,6 +83,8 @@ def _normalize_image(image: Image.Image, max_dimension: int = _MAX_IMAGE_DIMENSI
             (int(width * scale), int(height * scale)),
             Image.LANCZOS,
         )
+    image = image.filter(ImageFilter.SHARPEN)
+    image = ImageOps.autocontrast(image)
     image = ImageEnhance.Contrast(image).enhance(1.5)
     return image
 
@@ -95,12 +97,12 @@ def _image_to_base64_png(image: Image.Image) -> str:
 
 
 def _get_page_images_from_pdf(file_bytes: bytes) -> List[Image.Image]:
-    """Render each PDF page to a PIL image at 150 dpi."""
+    """Render each PDF page to a PIL image at 300 dpi."""
     document = fitz.open(stream=file_bytes, filetype="pdf")
     images: List[Image.Image] = []
     try:
         for page in document:
-            pixmap = page.get_pixmap(dpi=150)
+            pixmap = page.get_pixmap(dpi=300)
             images.append(Image.open(io.BytesIO(pixmap.tobytes("png"))))
     finally:
         document.close()
@@ -109,6 +111,32 @@ def _get_page_images_from_pdf(file_bytes: bytes) -> List[Image.Image]:
 
 def _get_image_from_bytes(file_bytes: bytes) -> Image.Image:
     return Image.open(io.BytesIO(file_bytes))
+
+
+def _crop_field_regions(image: Image.Image) -> List[Image.Image]:
+    """Return sub-image crops for common high-value title field locations.
+
+    Crops are based on the typical layout of US state vehicle title forms:
+    - Top strip (first ~12 % of height, full width)  → VIN and vehicle year row
+    - Top-right corner (~15 % of width, ~10 % of height) → title number area
+
+    These targeted crops reduce background noise for the AI model when the
+    full-page image is complex (security guilloché patterns, photos taken at
+    an angle, etc.).
+    """
+    width, height = image.size
+    crops: List[Image.Image] = []
+
+    # Top strip: full width × first 12 % of height (VIN / year row)
+    top_strip_height = max(1, int(height * 0.12))
+    crops.append(image.crop((0, 0, width, top_strip_height)))
+
+    # Top-right corner: rightmost 15 % of width × first 10 % of height (title number)
+    top_right_left = max(0, int(width * 0.85))
+    top_right_height = max(1, int(height * 0.10))
+    crops.append(image.crop((top_right_left, 0, width, top_right_height)))
+
+    return crops
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +319,15 @@ def extract_fields_with_ai(
         parsed = _parse_ai_response(raw)
         if parsed is not None:
             page_results.append(parsed)
+
+        # Send targeted field-region crops to the AI to reduce noise
+        for crop in _crop_field_regions(image):
+            normalised_crop = _normalize_image(crop)
+            crop_b64 = _image_to_base64_png(normalised_crop)
+            raw_crop = _call_ollama(crop_b64, endpoint, model, timeout_int)
+            parsed_crop = _parse_ai_response(raw_crop)
+            if parsed_crop is not None:
+                page_results.append(parsed_crop)
 
     if not page_results:
         return None

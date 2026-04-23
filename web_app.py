@@ -8,7 +8,7 @@ import fitz
 import pytesseract
 import requests
 from flask import Flask, jsonify, render_template, request
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 
 from ai_extraction import extract_fields_with_ai
 from title_entry_tool import (
@@ -230,6 +230,10 @@ TITLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 STATE_PATTERN = re.compile(r"\bSTATE\s*[:\-]?\s*([A-Z]{2})\b", re.IGNORECASE)
+# High-priority pattern for 8-digit numeric title numbers (common in many US states).
+TITLE_8DIGIT_PATTERN = re.compile(r"\b(\d{8})\b")
+# Translation table for common OCR misreads in numeric contexts (O→0, I→1).
+_OCR_NOISE_TABLE = str.maketrans("OI", "01")
 
 
 def allowed_file(filename: str) -> bool:
@@ -244,6 +248,14 @@ def parse_extracted_fields(text: str) -> Dict[str, Optional[Union[str, int]]]:
     state_match = STATE_PATTERN.search(upper_text)
 
     title_number = title_match.group(1).replace("-", "") if title_match else None
+    if not title_number:
+        # High-priority: 8-digit numeric title number (common US title format).
+        # Apply OCR-noise correction (O→0, I→1) before searching so that
+        # misreads like "5O312391" or "583I2391" can still match.
+        noise_corrected = upper_text.translate(_OCR_NOISE_TABLE)
+        eight_digit_match = TITLE_8DIGIT_PATTERN.search(noise_corrected)
+        if eight_digit_match:
+            title_number = eight_digit_match.group(1)
     if not title_number:
         excluded_tokens = {
             "VIN",
@@ -294,7 +306,21 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def _extract_text_from_image(file_bytes: bytes) -> str:
     image = Image.open(io.BytesIO(file_bytes))
-    return pytesseract.image_to_string(image).strip()
+    image = ImageOps.exif_transpose(image)
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    # Upscale to ensure the long side is at least 2000 px for OCR accuracy.
+    width, height = image.size
+    if max(width, height) < 2000:
+        scale = 2000 / max(width, height)
+        image = image.resize(
+            (int(width * scale), int(height * scale)),
+            Image.LANCZOS,
+        )
+    image = image.convert("L")
+    image = image.filter(ImageFilter.SHARPEN)
+    image = ImageOps.autocontrast(image)
+    return pytesseract.image_to_string(image, config="--psm 6").strip()
 
 
 def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
@@ -314,6 +340,46 @@ def _tesseract_fields_and_confidence(
     fields = parse_extracted_fields(text) if text else {f: None for f in _FIELD_NAMES}
     confidence = {f: (0.7 if fields.get(f) is not None else 0.0) for f in _FIELD_NAMES}
     return fields, confidence
+
+
+def _get_word_confidences(file_bytes: bytes) -> Dict[str, float]:
+    """Return per-word Tesseract confidence scores for an image file.
+
+    Words are upper-cased; confidence is normalised to 0.0–1.0.
+    Returns an empty dict on any error (e.g. PDF or corrupt input).
+    """
+    word_conf: Dict[str, float] = {}
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        for word, conf in zip(data.get("text", []), data.get("conf", [])):
+            word = (word or "").strip().upper()
+            if word and conf != -1:
+                norm = max(0.0, min(1.0, float(conf) / 100.0))
+                if word not in word_conf or norm > word_conf[word]:
+                    word_conf[word] = norm
+    except Exception:
+        pass
+    return word_conf
+
+
+def _apply_word_confidence(
+    fields: Dict[str, Any],
+    confidence: Dict[str, float],
+    word_conf: Dict[str, float],
+) -> None:
+    """Override nominal confidence in-place with real Tesseract word scores.
+
+    For each extracted field value, looks up the corresponding token in
+    *word_conf* (Tesseract per-word confidence map) and replaces the
+    nominal score when a match is found.
+    """
+    for field in _FIELD_NAMES:
+        val = fields.get(field)
+        if val is not None:
+            key = str(val).upper()
+            if key in word_conf:
+                confidence[field] = word_conf[key]
 
 
 def _run_extraction(
@@ -353,6 +419,10 @@ def _run_extraction(
         if not raw_text_value:
             return None
         fields, confidence = _tesseract_fields_and_confidence(raw_text_value)
+        # Override nominal confidence with real per-word Tesseract scores.
+        word_conf = _get_word_confidences(file_bytes)
+        if word_conf:
+            _apply_word_confidence(fields, confidence, word_conf)
         source = "tesseract"
     else:
         # "ai" or "hybrid"
@@ -362,6 +432,10 @@ def _run_extraction(
                 return None
             # AI unavailable – fall back to Tesseract
             fields, confidence = _tesseract_fields_and_confidence(raw_text_value)
+            # Override nominal confidence with real per-word Tesseract scores.
+            word_conf = _get_word_confidences(file_bytes)
+            if word_conf:
+                _apply_word_confidence(fields, confidence, word_conf)
             source = "tesseract"
         elif provider == "ai":
             fields = {f: ai_result.get(f) for f in _FIELD_NAMES}
@@ -379,6 +453,10 @@ def _run_extraction(
                 tesseract_fields, tesseract_conf = _tesseract_fields_and_confidence(
                     raw_text_value or ""
                 )
+                # Override nominal confidence with real per-word Tesseract scores.
+                word_conf = _get_word_confidences(file_bytes)
+                if word_conf:
+                    _apply_word_confidence(tesseract_fields, tesseract_conf, word_conf)
             else:
                 tesseract_fields = {f: None for f in _FIELD_NAMES}
                 tesseract_conf = {f: 0.0 for f in _FIELD_NAMES}
