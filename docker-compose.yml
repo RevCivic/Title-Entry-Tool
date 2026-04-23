@@ -42,7 +42,12 @@ services:
         condition: service_healthy
 
   # ── AI services ────────────────────────────────────────────────────────────
-  # Only started when the "ai" profile is active:
+  # Only started when the "ai" profile is active.
+  #
+  # Activate via environment variable (preferred – works with Portainer/GitOps):
+  #   COMPOSE_PROFILES=ai   →  set this in your .env file or stack env vars
+  #
+  # Activate via CLI flag (alternative):
   #   docker compose --profile ai up
   #
   # The app starts and accepts uploads immediately using OCR while the model

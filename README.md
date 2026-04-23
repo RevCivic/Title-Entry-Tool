@@ -24,6 +24,7 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 
 | Variable                  | Default                      | Description                                               |
 |---------------------------|------------------------------|-----------------------------------------------------------|
+| `COMPOSE_PROFILES`        | *(empty)*                    | Set to `ai` to start Ollama AI services with the stack    |
 | `PORT`                    | `8000`                       | Port the Flask app listens on                             |
 | `DEFAULT_STATE`           | `NM`                         | Fallback state when OCR finds none                        |
 | `DB_HOST`                 | `localhost`                  | PostgreSQL hostname                                       |
@@ -81,48 +82,69 @@ Then open `http://localhost:8000` (or your configured port).
 ### Run with Docker Compose (recommended)
 
 ```bash
-cp .env.example .env   # edit credentials as needed
+cp .env.example .env   # edit credentials and profile as needed
 ```
 
-#### First 5 minutes – core services only (immediate)
+#### Controlling which services start
+
+AI services are gated behind the `ai` Compose profile.  Which services start
+is determined by the `COMPOSE_PROFILES` environment variable — **no CLI flags
+required**.
+
+| `COMPOSE_PROFILES` value | Services started                                      |
+|--------------------------|-------------------------------------------------------|
+| *(empty or unset)*       | PostgreSQL + Flask app (OCR only, starts immediately) |
+| `ai`                     | Above **plus** Ollama server and model downloader     |
+
+Set the variable in your `.env` file, in Portainer's *Environment Variables*
+screen, or in any other orchestration layer that injects environment variables
+before `docker compose up` runs.
+
+```dotenv
+# .env – OCR only (default)
+COMPOSE_PROFILES=
+
+# .env – with AI assistance
+COMPOSE_PROFILES=ai
+```
+
+Then start the stack the same way regardless of mode:
 
 ```bash
 docker compose up --build
 ```
 
-This starts PostgreSQL and the Flask app.  The app is ready to accept uploads
-immediately using OCR (Tesseract) extraction.  Open `http://localhost:8000`.
-
-#### Add AI-assisted extraction
-
-When you are ready to enable the AI vision model, start the `ai` profile:
-
-```bash
-docker compose --profile ai up --build
-```
-
-This adds two services:
-- **`ollama`** – runs the Ollama server (starts immediately).
-- **`ollama-init`** – downloads the configured model (`AI_MODEL`, default
-  `moondream`) in the background.  The app continues working with OCR while the
-  download completes (~2–4 GB on first run).
-
-The status bar at the top of the UI shows the current extraction mode and
-whether AI is ready. Once the model download finishes, AI-assisted extraction
-activates automatically on the next upload.
-
 > **Disk space:** allocate at least 5 GB for the `ollama_data` volume
 > (`moondream` is ~1.5 GB; larger models such as `llava` require ~4 GB).
+
+> **First AI run:** the `ollama-init` service downloads the configured model
+> (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
+> uploads with OCR while the download completes.
 
 > **Image pinning:** the compose file uses `ollama/ollama:latest`.  For
 > production deployments, pin to a specific release, e.g.
 > `image: ollama/ollama:0.6.8`, to prevent unexpected upgrades.
 
-#### Optional GPU for AI service
+#### CLI alternative
 
-If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed:
+If you prefer to keep `COMPOSE_PROFILES` empty and activate AI from the
+command line:
 
 ```bash
+docker compose --profile ai up --build
+```
+
+#### Optional GPU for AI service
+
+If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed, layer in
+the GPU override file.  `COMPOSE_PROFILES=ai` (or `--profile ai`) is still
+required to start Ollama:
+
+```bash
+# env-var approach (recommended for Portainer)
+COMPOSE_PROFILES=ai docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+
+# CLI approach
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up --build
 ```
 
