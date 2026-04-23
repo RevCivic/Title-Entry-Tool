@@ -333,9 +333,15 @@ def _run_extraction(
 
     Returns None when no text or data could be extracted at all.
     """
-    raw_text = extract_text_from_upload(filename, file_bytes)
-
     ai_result = None
+    raw_text: Optional[str] = None
+
+    def _get_raw_text() -> str:
+        nonlocal raw_text
+        if raw_text is None:
+            raw_text = extract_text_from_upload(filename, file_bytes)
+        return raw_text
+
     if provider in ("ai", "hybrid"):
         try:
             ai_result = extract_fields_with_ai(filename, file_bytes)
@@ -343,31 +349,44 @@ def _run_extraction(
             ai_result = None
 
     if provider == "tesseract":
-        if not raw_text:
+        raw_text_value = _get_raw_text()
+        if not raw_text_value:
             return None
-        fields, confidence = _tesseract_fields_and_confidence(raw_text)
+        fields, confidence = _tesseract_fields_and_confidence(raw_text_value)
         source = "tesseract"
     else:
         # "ai" or "hybrid"
-        if ai_result is None and not raw_text:
-            return None
-
         if ai_result is None:
+            raw_text_value = _get_raw_text()
+            if not raw_text_value:
+                return None
             # AI unavailable – fall back to Tesseract
-            fields, confidence = _tesseract_fields_and_confidence(raw_text)
+            fields, confidence = _tesseract_fields_and_confidence(raw_text_value)
             source = "tesseract"
         elif provider == "ai":
             fields = {f: ai_result.get(f) for f in _FIELD_NAMES}
             confidence = ai_result.get("confidence", {f: 0.0 for f in _FIELD_NAMES})
             source = "ai"
         else:
-            # hybrid: use AI where confident, Tesseract elsewhere
-            tesseract_fields, tesseract_conf = _tesseract_fields_and_confidence(raw_text or "")
+            # hybrid: use AI where confident, Tesseract elsewhere (only if needed)
+            ai_conf_map = ai_result.get("confidence", {})
+            needs_tesseract = any(
+                ai_result.get(field) is None or ai_conf_map.get(field, 0.0) < threshold
+                for field in _FIELD_NAMES
+            )
+            if needs_tesseract:
+                raw_text_value = _get_raw_text()
+                tesseract_fields, tesseract_conf = _tesseract_fields_and_confidence(
+                    raw_text_value or ""
+                )
+            else:
+                tesseract_fields = {f: None for f in _FIELD_NAMES}
+                tesseract_conf = {f: 0.0 for f in _FIELD_NAMES}
+
             fields = {}
             confidence = {}
             ai_used = False
             tess_used = False
-            ai_conf_map = ai_result.get("confidence", {})
             for field in _FIELD_NAMES:
                 ai_val = ai_result.get(field)
                 ai_conf = ai_conf_map.get(field, 0.0)
@@ -386,12 +405,14 @@ def _run_extraction(
             else:
                 source = "tesseract"
 
+    raw_text_out = raw_text or ""
+
     low_confidence: List[str] = [
         f for f in _FIELD_NAMES if confidence.get(f, 0.0) < threshold
     ]
     return {
         "fields": fields,
-        "raw_text": raw_text or "",
+        "raw_text": raw_text_out,
         "source": source,
         "confidence": confidence,
         "low_confidence": low_confidence,
