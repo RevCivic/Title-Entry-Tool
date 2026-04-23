@@ -307,8 +307,6 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
 def _extract_text_from_image(file_bytes: bytes) -> str:
     image = Image.open(io.BytesIO(file_bytes))
     image = ImageOps.exif_transpose(image)
-    if image.mode not in ("RGB", "L"):
-        image = image.convert("RGB")
     # Upscale to ensure the long side is at least 2000 px for OCR accuracy.
     width, height = image.size
     if max(width, height) < 2000:
@@ -317,6 +315,7 @@ def _extract_text_from_image(file_bytes: bytes) -> str:
             (int(width * scale), int(height * scale)),
             Image.LANCZOS,
         )
+    # Convert to grayscale for Tesseract (handles any input mode).
     image = image.convert("L")
     image = image.filter(ImageFilter.SHARPEN)
     image = ImageOps.autocontrast(image)

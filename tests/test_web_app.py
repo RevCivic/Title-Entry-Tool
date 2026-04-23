@@ -3,6 +3,8 @@ import unittest
 from io import BytesIO
 from unittest import mock
 
+from PIL import Image as _PILImage
+
 from web_app import (
     _apply_word_confidence,
     _check_ai_status,
@@ -113,9 +115,7 @@ class WebAppParsingTests(unittest.TestCase):
         image_open_mock: mock.Mock,
         image_to_string_mock: mock.Mock,
     ) -> None:
-        from PIL import Image as _Image
-
-        fake_image = _Image.new("RGB", (100, 80), color=(200, 200, 200))
+        fake_image = _PILImage.new("RGB", (100, 80), color=(200, 200, 200))
         image_open_mock.return_value = fake_image
         result = _extract_text_from_image(b"img-bytes")
         self.assertEqual("ocr image text", result)

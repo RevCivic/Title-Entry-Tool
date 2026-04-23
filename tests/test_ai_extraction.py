@@ -342,12 +342,15 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         _norm_mock: mock.Mock,
         _call_mock: mock.Mock,
     ) -> None:
-        get_pages_mock.return_value = [_make_small_rgb_image(), _make_small_rgb_image()]
+        page_images = [_make_small_rgb_image(), _make_small_rgb_image()]
+        get_pages_mock.return_value = page_images
         result = extract_fields_with_ai("document.pdf", b"fake-pdf-bytes")
         # All calls failed → None
         self.assertIsNone(result)
-        # Each page generates 1 full-image call + 2 crop calls = 3 calls per page.
-        self.assertEqual(6, _call_mock.call_count)
+        # Each page: 1 full-image call + 2 crop calls (from _crop_field_regions).
+        crops_per_page = len(_crop_field_regions(_make_small_rgb_image()))
+        expected_calls = len(page_images) * (1 + crops_per_page)
+        self.assertEqual(expected_calls, _call_mock.call_count)
 
     @mock.patch("ai_extraction._call_ollama", return_value=None)
     @mock.patch("ai_extraction._normalize_image", side_effect=lambda img, **kw: img)
