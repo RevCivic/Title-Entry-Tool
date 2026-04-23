@@ -5,123 +5,555 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Title Entry Tool</title>
     <style>
-      body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-      form { display: grid; gap: 0.75rem; padding: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-      .ok   { color: #1e7a1e; }
-      .err  { color: #aa2222; }
-      .warn { color: #cc7a00; }
-      table { border-collapse: collapse; margin-top: 1rem; }
-      th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
-      #status-bar { display: flex; gap: 1.5rem; padding: 0.5rem 0.75rem; background: #f5f5f5;
-                    border: 1px solid #ddd; border-radius: 4px; margin-bottom: 1rem;
-                    font-size: 0.875rem; flex-wrap: wrap; }
-      #status-bar span { display: inline-flex; align-items: center; gap: 0.35rem; }
+      /* ── Reset / base ──────────────────────────────────────────────────── */
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: Arial, sans-serif;
+        font-size: 0.9375rem;
+        background: #f0f2f5;
+        color: #222;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      /* ── Layout ────────────────────────────────────────────────────────── */
+      .page { max-width: 960px; margin: 0 auto; display: grid; gap: 1.25rem; }
+
+      /* ── Card ──────────────────────────────────────────────────────────── */
+      .card {
+        background: #fff;
+        border: 1px solid #d9dde3;
+        border-radius: 8px;
+        padding: 1.25rem 1.5rem;
+      }
+      .card-title {
+        font-size: 0.8125rem;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+        color: #666;
+        margin-bottom: 1rem;
+      }
+
+      /* ── Page header ───────────────────────────────────────────────────── */
+      .page-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: .5rem;
+      }
+      .page-header h1 { font-size: 1.5rem; }
+
+      /* ── Status bar ────────────────────────────────────────────────────── */
+      #status-bar {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 0.875rem;
+      }
+      #status-bar .item { display: flex; align-items: center; gap: .35rem; }
+
+      /* ── Badge ─────────────────────────────────────────────────────────── */
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: .3rem;
+        padding: .2rem .55rem;
+        border-radius: 12px;
+        font-size: .8rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .badge-ok      { background: #d4edda; color: #155724; }
+      .badge-warn    { background: #fff3cd; color: #856404; }
+      .badge-err     { background: #f8d7da; color: #721c24; }
+      .badge-info    { background: #d1ecf1; color: #0c5460; }
+      .badge-neutral { background: #e9ecef; color: #495057; }
+
+      /* ── Form ──────────────────────────────────────────────────────────── */
+      .upload-form { display: grid; gap: .75rem; }
+      .upload-form label { display: flex; flex-direction: column; gap: .3rem; font-weight: 600; font-size: .875rem; }
+      .upload-form input[type="text"],
+      .upload-form input[type="file"] {
+        padding: .45rem .6rem;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        font-size: .9rem;
+        width: 100%;
+      }
+      .upload-form input[type="text"] { max-width: 120px; }
+
+      /* ── Buttons ───────────────────────────────────────────────────────── */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+        padding: .5rem 1.1rem;
+        border: none;
+        border-radius: 5px;
+        font-size: .9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: filter .15s;
+      }
+      .btn:hover { filter: brightness(.92); }
+      .btn:active { filter: brightness(.85); }
+      .btn:disabled { opacity: .55; cursor: default; filter: none; }
+      .btn-primary  { background: #0d6efd; color: #fff; }
+      .btn-success  { background: #198754; color: #fff; }
+      .btn-warning  { background: #ffc107; color: #212529; }
+      .btn-sm       { padding: .3rem .75rem; font-size: .8rem; }
+
+      /* ── Flash messages ────────────────────────────────────────────────── */
+      .flash { padding: .7rem 1rem; border-radius: 6px; font-weight: 600; margin-top: .75rem; }
+      .flash-ok   { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+      .flash-err  { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+      .flash-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+
+      /* ── Tables ────────────────────────────────────────────────────────── */
+      table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .875rem; }
+      th, td { border: 1px solid #dee2e6; padding: .45rem .7rem; text-align: left; }
+      th { background: #f8f9fa; font-weight: 700; }
+      tr:nth-child(even) td { background: #fafafa; }
+      .conf-ok  { color: #155724; font-weight: 600; }
+      .conf-err { color: #721c24; font-weight: 600; }
+
+      /* ── Two-column results layout ─────────────────────────────────────── */
+      .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+      @media (max-width: 620px) { .results-grid { grid-template-columns: 1fr; } }
+
+      /* ── AI controls ───────────────────────────────────────────────────── */
+      .ai-controls { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin-top: .75rem; }
+
+      /* ── Operations / container grid ───────────────────────────────────── */
+      .container-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: .75rem;
+        margin-top: .75rem;
+      }
+      .svc-card {
+        border: 1px solid #d9dde3;
+        border-radius: 6px;
+        padding: .75rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: .4rem;
+      }
+      .svc-card .svc-name { font-weight: 700; font-size: .875rem; }
+      .svc-card .svc-actions { display: flex; gap: .4rem; margin-top: .3rem; flex-wrap: wrap; }
+
+      /* ── Log panel ─────────────────────────────────────────────────────── */
+      .log-panel {
+        margin-top: .6rem;
+        display: none;   /* shown by JS */
+      }
+      .log-panel.open { display: block; }
+      .log-output {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        font-family: "Courier New", monospace;
+        font-size: .78rem;
+        line-height: 1.5;
+        padding: .75rem 1rem;
+        border-radius: 5px;
+        max-height: 260px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin-top: .4rem;
+      }
+      .log-toolbar {
+        display: flex;
+        gap: .5rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: .3rem;
+      }
+      .log-svc-label { font-weight: 700; font-size: .8rem; }
+
+      /* ── Spinner ───────────────────────────────────────────────────────── */
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .spinner {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin .7s linear infinite;
+        vertical-align: middle;
+      }
     </style>
   </head>
+
   <body>
-    <h1>Title Entry Tool</h1>
+    <div class="page">
 
-    <div id="status-bar" aria-label="Service status">
-      <span><strong>Mode:</strong> <span id="provider-label">…</span></span>
-      <span><strong>AI:</strong> <span id="ai-label">checking…</span></span>
-    </div>
+      <!-- ── Page header ─────────────────────────────────────────────────── -->
+      <div class="page-header">
+        <h1>Title Entry Tool</h1>
+        <div id="status-bar">
+          <div class="item"><strong>Mode:</strong>&nbsp;<span id="provider-badge" class="badge badge-neutral">…</span></div>
+          <div class="item"><strong>AI:</strong>&nbsp;<span id="ai-badge" class="badge badge-neutral">checking…</span></div>
+        </div>
+      </div>
 
-    <p>Upload a title PDF or image to extract and validate title data.</p>
+      <!-- ── Upload ──────────────────────────────────────────────────────── -->
+      <div class="card">
+        <div class="card-title">Upload Title Document</div>
+        <form class="upload-form" method="post" enctype="multipart/form-data">
+          <label>
+            State override (optional, 2 letters):
+            <input type="text" name="state" maxlength="2" placeholder="e.g. NM" />
+          </label>
+          <label>
+            PDF or image file:
+            <input type="file" name="file"
+              accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
+          </label>
+          <div>
+            <button class="btn btn-primary" type="submit">&#8593; Extract and Save</button>
+          </div>
+        </form>
 
-    <form method="post" enctype="multipart/form-data">
-      <label>
-        State override (optional, 2 letters):
-        <input type="text" name="state" maxlength="2" />
-      </label>
-      <label>
-        PDF/Image file:
-        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
-      </label>
-      <button type="submit">Extract and Save</button>
-    </form>
+        {% if message %}
+          <div class="flash flash-ok">&#10003; {{ message }}</div>
+        {% endif %}
+        {% if error %}
+          <div class="flash flash-err">&#9888; {{ error }}</div>
+        {% endif %}
+      </div>
 
-    {% if message %}
-      <p class="ok">{{ message }}</p>
-    {% endif %}
-    {% if error %}
-      <p class="err">{{ error }}</p>
-    {% endif %}
+      <!-- ── Results ─────────────────────────────────────────────────────── -->
+      {% if fields %}
+      <div class="results-grid">
+        <div class="card">
+          <div class="card-title">Extracted Fields</div>
+          <table>
+            <tr><th>State</th><td>{{ fields.state }}</td></tr>
+            <tr><th>Title Number</th><td>{{ fields.title_number }}</td></tr>
+            <tr><th>VIN</th><td>{{ fields.vin }}</td></tr>
+            <tr><th>Vehicle Year</th><td>{{ fields.vehicle_year }}</td></tr>
+          </table>
+        </div>
 
-    {% if fields %}
-      <h2>Extracted Fields</h2>
-      <table>
-        <tr><th>State</th><td>{{ fields.state }}</td></tr>
-        <tr><th>Title Number</th><td>{{ fields.title_number }}</td></tr>
-        <tr><th>VIN</th><td>{{ fields.vin }}</td></tr>
-        <tr><th>Vehicle Year</th><td>{{ fields.vehicle_year }}</td></tr>
-      </table>
-    {% endif %}
+        <div class="card">
+          <div class="card-title">Extraction Details</div>
+          {% if extraction_info %}
+          <table>
+            <tr><th>Source</th><td>{{ extraction_info.source | upper }}</td></tr>
+          </table>
+          <br />
+          <table>
+            <tr><th>Field</th><th>Confidence</th></tr>
+            {% for field, conf in extraction_info.confidence.items() %}
+            <tr>
+              <td>{{ field }}</td>
+              <td class="{{ 'conf-err' if field in extraction_info.low_confidence else 'conf-ok' }}">
+                {{ (conf * 100) | round | int }}%
+              </td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% if extraction_info.low_confidence %}
+            <div class="flash flash-warn" style="margin-top:.6rem">
+              &#9888; Low confidence on:
+              <strong>{{ extraction_info.low_confidence | join(', ') }}</strong>.
+              Please verify these fields.
+            </div>
+          {% endif %}
+          {% endif %}
+        </div>
+      </div>
 
-    {% if extraction_info %}
-      <h2>Extraction Details</h2>
-      <table>
-        <tr>
-          <th>Source</th>
-          <td>{{ extraction_info.source | upper }}</td>
-        </tr>
-      </table>
-
-      <h3>Field Confidence</h3>
-      <table>
-        <tr><th>Field</th><th>Confidence</th></tr>
-        {% for field, conf in extraction_info.confidence.items() %}
-        <tr>
-          <td>{{ field }}</td>
-          <td class="{{ 'err' if field in extraction_info.low_confidence else 'ok' }}">
-            {{ (conf * 100) | round | int }}%
-          </td>
-        </tr>
-        {% endfor %}
-      </table>
-
-      {% if extraction_info.low_confidence %}
-        <p class="warn">
-          &#9888; Low confidence on:
-          <strong>{{ extraction_info.low_confidence | join(', ') }}</strong>.
-          Please verify these fields before submitting.
-        </p>
+      {% if record %}
+      <div class="card">
+        <div class="card-title">Validation Result</div>
+        <table>
+          <tr><th>Record ID</th><td>{{ record.id }}</td></tr>
+          <tr><th>Validated</th>
+              <td>{% if record.is_validated %}<span class="badge badge-ok">&#10003; Valid</span>{% else %}<span class="badge badge-err">&#9888; Invalid</span>{% endif %}</td>
+          </tr>
+          {% if record.validation_errors %}
+          <tr><th>Errors</th><td>{{ record.validation_errors | join(', ') }}</td></tr>
+          {% endif %}
+        </table>
+      </div>
       {% endif %}
-    {% endif %}
+      {% endif %}
 
-    {% if record %}
-      <h2>Validation Result</h2>
-      <table>
-        <tr><th>Record ID</th><td>{{ record.id }}</td></tr>
-        <tr><th>Validated</th><td>{{ record.is_validated }}</td></tr>
-        <tr><th>Errors</th><td>{{ record.validation_errors|join(', ') }}</td></tr>
-      </table>
-    {% endif %}
+      <!-- ── AI Controls ─────────────────────────────────────────────────── -->
+      <div class="card" id="ai-controls-card">
+        <div class="card-title">AI Extraction Controls</div>
+        <p id="ai-desc" style="font-size:.875rem;color:#555;margin-bottom:.5rem"></p>
+        <div class="ai-controls">
+          <span id="ai-status-detail" class="badge badge-neutral">checking…</span>
+          <button class="btn btn-success btn-sm" id="start-ai-btn"
+                  style="display:none" onclick="startAI()">
+            &#9654; Start AI Services
+          </button>
+          <button class="btn btn-warning btn-sm" id="refresh-ai-btn"
+                  onclick="refreshStatus()" title="Re-check AI status">
+            &#8635; Refresh
+          </button>
+        </div>
+        <p id="ai-action-msg" style="font-size:.8rem;margin-top:.5rem;min-height:1.2em"></p>
+      </div>
+
+      <!-- ── Operations ──────────────────────────────────────────────────── -->
+      <div class="card" id="ops-card">
+        <div class="card-title">Operations &amp; Logs</div>
+        <p style="font-size:.875rem;color:#555;margin-bottom:.75rem">
+          Container status updates every 15 s. Click <strong>Logs</strong> to
+          view the most recent output for each service.
+        </p>
+
+        <div class="container-grid" id="container-grid">
+          <!-- populated by JS -->
+          <div style="color:#888;font-size:.85rem">Loading container status…</div>
+        </div>
+
+        <!-- shared log panel -->
+        <div class="log-panel" id="log-panel">
+          <div class="log-toolbar">
+            <span class="log-svc-label" id="log-svc-label"></span>
+            <button class="btn btn-sm" style="background:#333;color:#fff"
+                    onclick="refreshLogs()">&#8635; Refresh</button>
+            <button class="btn btn-sm" style="background:#555;color:#fff"
+                    onclick="closeLogPanel()">&#10005; Close</button>
+            <label style="font-size:.8rem;margin-left:auto">
+              Lines:
+              <select id="log-lines-select" onchange="refreshLogs()"
+                      style="font-size:.8rem;padding:.15rem .3rem">
+                <option value="50">50</option>
+                <option value="100" selected>100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+          </div>
+          <div class="log-output" id="log-output"></div>
+        </div>
+      </div>
+
+    </div><!-- /.page -->
 
     <script>
-      (function () {
+    (function () {
+      'use strict';
+
+      /* ── Helpers ──────────────────────────────────────────────────────── */
+      function setBadge(el, cls, text) {
+        el.className = 'badge ' + cls;
+        el.textContent = text;
+      }
+
+      /* ── AI status ─────────────────────────────────────────────────────── */
+      var _currentAiStatus = 'unknown';
+
+      function applyAiStatus(data) {
+        var provBadge = document.getElementById('provider-badge');
+        var aiBadge   = document.getElementById('ai-badge');
+        var aiDetail  = document.getElementById('ai-status-detail');
+        var aiDesc    = document.getElementById('ai-desc');
+        var startBtn  = document.getElementById('start-ai-btn');
+
+        setBadge(provBadge, 'badge-info', data.extraction_provider.toUpperCase());
+
+        var s = data.ai_status;
+        _currentAiStatus = s;
+
+        if (s === 'ready') {
+          setBadge(aiBadge,  'badge-ok',      '\u2713 AI Ready');
+          setBadge(aiDetail, 'badge-ok',      '\u2713 Ollama running \u2014 model loaded');
+          aiDesc.textContent = 'AI-assisted extraction is active.';
+          startBtn.style.display = 'none';
+        } else if (s === 'loading') {
+          setBadge(aiBadge,  'badge-warn',    '\u25F4 AI Loading');
+          setBadge(aiDetail, 'badge-warn',    '\u25F4 Ollama running \u2014 model downloading\u2026');
+          aiDesc.textContent = 'Ollama is running and the model is downloading. OCR fallback is active.';
+          startBtn.style.display = 'none';
+        } else if (s === 'not_configured') {
+          setBadge(aiBadge,  'badge-neutral', '\u2014 OCR only');
+          setBadge(aiDetail, 'badge-neutral', '\u2014 Tesseract / OCR only');
+          aiDesc.textContent = 'AI is not configured (EXTRACTION_PROVIDER=tesseract).';
+          startBtn.style.display = 'none';
+        } else {
+          /* unavailable */
+          setBadge(aiBadge,  'badge-warn',    '\u26A0 AI Unavailable');
+          setBadge(aiDetail, 'badge-warn',    '\u26A0 Ollama not reachable \u2014 OCR fallback active');
+          aiDesc.textContent =
+            'AI services are not running. Set COMPOSE_PROFILES=ai in your stack ' +
+            'environment and redeploy, or click \u201cStart AI Services\u201d below ' +
+            'if the stack was previously deployed with AI enabled.';
+          startBtn.style.display = '';
+        }
+      }
+
+      function refreshStatus() {
+        var btn = document.getElementById('refresh-ai-btn');
+        btn.disabled = true;
         fetch('/api/status')
           .then(function (r) { return r.json(); })
-          .then(function (data) {
-            document.getElementById('provider-label').textContent =
-              data.extraction_provider.toUpperCase();
+          .then(function (data) { applyAiStatus(data); })
+          .catch(function () {
+            setBadge(document.getElementById('ai-badge'), 'badge-err', '? Status error');
+          })
+          .finally(function () { btn.disabled = false; });
+      }
 
-            var aiSpan = document.getElementById('ai-label');
-            if (data.ai_status === 'ready') {
-              aiSpan.textContent = '\u2713 Ready';
-              aiSpan.style.color = '#1e7a1e';
-            } else if (data.ai_status === 'not_configured') {
-              aiSpan.textContent = '\u2014 OCR only';
-              aiSpan.style.color = '#555';
+      function startAI() {
+        var btn = document.getElementById('start-ai-btn');
+        var msg = document.getElementById('ai-action-msg');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Starting\u2026';
+        msg.textContent = '';
+
+        fetch('/api/maintenance/ai/start', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.success) {
+              msg.style.color = '#155724';
+              msg.textContent = data.messages.join(' ') + ' Checking status\u2026';
+              // Poll status a few times to catch the transition
+            var MAX_STATUS_POLLS = 6;
+          var polls = 0;
+              var iv = setInterval(function () {
+                polls++;
+                refreshStatus();
+                if (polls >= MAX_STATUS_POLLS || _currentAiStatus !== 'unavailable') {
+                  clearInterval(iv);
+                }
+              }, 5000);
             } else {
-              aiSpan.textContent = '\u26a0 Unavailable \u2014 OCR fallback active';
-              aiSpan.style.color = '#cc7a00';
+              msg.style.color = '#721c24';
+              msg.textContent = (data.errors || []).join(' ');
+              btn.disabled = false;
+              btn.innerHTML = '\u25B6 Start AI Services';
             }
           })
-          .catch(function () {
-            document.getElementById('provider-label').textContent = 'unknown';
-            document.getElementById('ai-label').textContent = '\u2014 status unavailable';
+          .catch(function (e) {
+            msg.style.color = '#721c24';
+            msg.textContent = 'Request failed: ' + e;
+            btn.disabled = false;
+            btn.innerHTML = '\u25B6 Start AI Services';
           });
-      }());
+      }
+
+      /* ── Container status ──────────────────────────────────────────────── */
+      var _openLogService = null;
+
+      var STATE_BADGE = {
+        'running':  ['badge-ok',      '\u25CF Running'],
+        'exited':   ['badge-neutral',  '\u25A1 Exited'],
+        'created':  ['badge-neutral',  '\u25CB Created'],
+        'restarting': ['badge-warn',   '\u21BB Restarting'],
+        'paused':   ['badge-neutral',  '\u23F8 Paused'],
+        'dead':     ['badge-err',      '\u2612 Dead'],
+      };
+
+      var HEALTH_BADGE = {
+        'healthy':   ['badge-ok',   '\u2665 Healthy'],
+        'unhealthy': ['badge-err',  '\u2665 Unhealthy'],
+        'starting':  ['badge-warn', '\u2665 Starting'],
+      };
+
+      function renderContainers(data) {
+        var grid = document.getElementById('container-grid');
+        if (!data.docker_available) {
+          grid.innerHTML =
+            '<p style="color:#666;font-size:.85rem">' +
+            'Docker socket unavailable \u2014 container status and log features require ' +
+            'the Docker socket to be mounted into this container.</p>';
+          return;
+        }
+        var services = data.services || {};
+        var names = Object.keys(services);
+        if (names.length === 0) {
+          grid.innerHTML = '<p style="color:#888;font-size:.85rem">No compose containers found.</p>';
+          return;
+        }
+        var html = '';
+        names.forEach(function (svc) {
+          var info = services[svc];
+          var stateBadge, healthBadge = '';
+          if (!info) {
+            stateBadge = '<span class="badge badge-neutral">\u2014 Not started</span>';
+          } else {
+            var sb = STATE_BADGE[info.state] || ['badge-neutral', info.state];
+            stateBadge = '<span class="badge ' + sb[0] + '">' + sb[1] + '</span>';
+            if (info.health) {
+              var hb = HEALTH_BADGE[info.health] || ['badge-neutral', info.health];
+              healthBadge = '<span class="badge ' + hb[0] + '" style="font-size:.72rem">' + hb[1] + '</span>';
+            }
+          }
+          html +=
+            '<div class="svc-card">' +
+            '  <div class="svc-name">' + escHtml(svc) + '</div>' +
+            '  <div>' + stateBadge + ' ' + healthBadge + '</div>' +
+            '  <div class="svc-actions">' +
+            '    <button class="btn btn-sm" style="background:#333;color:#fff"' +
+            '      onclick="openLogs(\'' + escHtml(svc) + '\')">&#128196; Logs</button>' +
+            '  </div>' +
+            '</div>';
+        });
+        grid.innerHTML = html;
+      }
+
+      function fetchContainers() {
+        fetch('/api/maintenance/containers')
+          .then(function (r) { return r.json(); })
+          .then(renderContainers)
+          .catch(function () {
+            document.getElementById('container-grid').innerHTML =
+              '<p style="color:#888;font-size:.85rem">Could not reach maintenance API.</p>';
+          });
+      }
+
+      /* ── Log panel ─────────────────────────────────────────────────────── */
+      function openLogs(svc) {
+        _openLogService = svc;
+        document.getElementById('log-svc-label').textContent = svc + ' logs';
+        document.getElementById('log-panel').classList.add('open');
+        refreshLogs();
+      }
+
+      function closeLogPanel() {
+        _openLogService = null;
+        document.getElementById('log-panel').classList.remove('open');
+      }
+
+      function refreshLogs() {
+        if (!_openLogService) return;
+        var lines = document.getElementById('log-lines-select').value;
+        var out   = document.getElementById('log-output');
+        out.textContent = 'Loading\u2026';
+        fetch('/api/maintenance/logs/' + encodeURIComponent(_openLogService) + '?lines=' + lines)
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.error) {
+              out.textContent = 'Error: ' + data.error;
+            } else if (!data.lines || data.lines.length === 0) {
+              out.textContent = '(no log output)';
+            } else {
+              out.textContent = data.lines.join('\n');
+              out.scrollTop   = out.scrollHeight;
+            }
+          })
+          .catch(function (e) { out.textContent = 'Request failed: ' + e; });
+      }
+
+      function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      }
+
+      /* ── Boot ──────────────────────────────────────────────────────────── */
+      refreshStatus();
+      fetchContainers();
+      setInterval(fetchContainers, 15000);
+      setInterval(refreshStatus,  30000);
+    }());
     </script>
   </body>
 </html>

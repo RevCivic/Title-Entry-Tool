@@ -5,9 +5,13 @@ from unittest import mock
 
 from web_app import (
     _check_ai_status,
+    _docker_client,
     _extract_text_from_image,
     _extract_text_from_pdf,
+    _get_service_containers,
+    _get_service_logs,
     _run_extraction,
+    _start_ai_services,
     _tesseract_fields_and_confidence,
     allowed_file,
     create_app,
@@ -189,7 +193,7 @@ class WebAppParsingTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertIn(b"TESSERACT", response.data)
-        self.assertIn(b"Field Confidence", response.data)
+        self.assertIn(b"Extraction Details", response.data)
 
     @mock.patch("web_app._run_extraction", return_value=None)
     def test_index_route_shows_error_when_extraction_returns_none(
@@ -387,15 +391,38 @@ class HealthAndStatusEndpointTests(unittest.TestCase):
     @mock.patch("web_app.EXTRACTION_PROVIDER", "hybrid")
     @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
     @mock.patch("web_app.requests.get")
-    def test_check_ai_status_returns_ready_when_endpoint_responds(
+    def test_check_ai_status_returns_ready_when_model_present(
+        self, get_mock: mock.Mock
+    ) -> None:
+        import os
+        import web_app as _wa
+
+        model_name = os.getenv("AI_MODEL", "moondream")
+        resp = mock.Mock()
+        resp.raise_for_status = mock.Mock()
+        resp.json.return_value = {"models": [{"name": model_name}]}
+        get_mock.return_value = resp
+
+        status = _check_ai_status()
+        self.assertEqual("ready", status)
+        self.assertEqual("ready", _wa._AI_STATUS_CACHE["status"])
+
+    @mock.patch("web_app.EXTRACTION_PROVIDER", "hybrid")
+    @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
+    @mock.patch("web_app.requests.get")
+    def test_check_ai_status_returns_loading_when_model_not_yet_present(
         self, get_mock: mock.Mock
     ) -> None:
         import web_app as _wa
 
-        get_mock.return_value = mock.Mock()
+        resp = mock.Mock()
+        resp.raise_for_status = mock.Mock()
+        resp.json.return_value = {"models": []}   # API up, model not downloaded yet
+        get_mock.return_value = resp
+
         status = _check_ai_status()
-        self.assertEqual("ready", status)
-        self.assertEqual("ready", _wa._AI_STATUS_CACHE["status"])
+        self.assertEqual("loading", status)
+        self.assertEqual("loading", _wa._AI_STATUS_CACHE["status"])
 
     @mock.patch("web_app.EXTRACTION_PROVIDER", "hybrid")
     @mock.patch("web_app._AI_STATUS_CACHE", {"status": "unknown", "checked_at": 0.0})
@@ -408,6 +435,121 @@ class HealthAndStatusEndpointTests(unittest.TestCase):
         status = _check_ai_status()
         self.assertEqual("unavailable", status)
         self.assertEqual("unavailable", _wa._AI_STATUS_CACHE["status"])
+
+
+class MaintenanceEndpointTests(unittest.TestCase):
+    """Tests for /api/maintenance/* endpoints."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    # ── /api/maintenance/containers ────────────────────────────────────────
+
+    @mock.patch("web_app._docker_client", return_value=None)
+    def test_containers_returns_unavailable_when_no_socket(
+        self, _mock: mock.Mock
+    ) -> None:
+        client = self._app().test_client()
+        response = client.get("/api/maintenance/containers")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertFalse(data["docker_available"])
+        self.assertIsNotNone(data["error"])
+
+    @mock.patch("web_app._get_service_containers")
+    @mock.patch("web_app._docker_client")
+    def test_containers_returns_service_dict_when_docker_available(
+        self, docker_mock: mock.Mock, containers_mock: mock.Mock
+    ) -> None:
+        docker_mock.return_value = mock.Mock()
+        containers_mock.return_value = {
+            "title-entry-tool": {"id": "abc", "name": "t", "state": "running", "health": "healthy"},
+            "postgres": None,
+            "ollama": None,
+            "ollama-init": None,
+        }
+        client = self._app().test_client()
+        response = client.get("/api/maintenance/containers")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertTrue(data["docker_available"])
+        self.assertIn("title-entry-tool", data["services"])
+        self.assertEqual("running", data["services"]["title-entry-tool"]["state"])
+
+    # ── /api/maintenance/logs/<service> ────────────────────────────────────
+
+    @mock.patch("web_app._docker_client", return_value=None)
+    def test_logs_returns_503_when_no_socket(self, _mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        response = client.get("/api/maintenance/logs/postgres")
+        self.assertEqual(503, response.status_code)
+
+    def test_logs_returns_400_for_unknown_service(self) -> None:
+        client = self._app().test_client()
+        response = client.get("/api/maintenance/logs/unknown-svc")
+        self.assertEqual(400, response.status_code)
+
+    @mock.patch("web_app._get_service_logs")
+    @mock.patch("web_app._docker_client")
+    def test_logs_returns_lines_for_known_service(
+        self, docker_mock: mock.Mock, logs_mock: mock.Mock
+    ) -> None:
+        docker_mock.return_value = mock.Mock()
+        logs_mock.return_value = {"lines": ["line1", "line2"], "error": None}
+        client = self._app().test_client()
+        response = client.get("/api/maintenance/logs/postgres?lines=50")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("postgres", data["service"])
+        self.assertEqual(["line1", "line2"], data["lines"])
+        self.assertIsNone(data["error"])
+
+    # ── POST /api/maintenance/ai/start ────────────────────────────────────
+
+    @mock.patch("web_app._docker_client", return_value=None)
+    def test_start_ai_returns_503_when_no_socket(self, _mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        response = client.post("/api/maintenance/ai/start")
+        self.assertEqual(503, response.status_code)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+
+    @mock.patch("web_app._start_ai_services")
+    @mock.patch("web_app._docker_client")
+    def test_start_ai_returns_200_on_success(
+        self, docker_mock: mock.Mock, start_mock: mock.Mock
+    ) -> None:
+        docker_mock.return_value = mock.Mock()
+        start_mock.return_value = {
+            "success": True,
+            "messages": ["'ollama' started."],
+            "errors": [],
+        }
+        client = self._app().test_client()
+        response = client.post("/api/maintenance/ai/start")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+
+    @mock.patch("web_app._start_ai_services")
+    @mock.patch("web_app._docker_client")
+    def test_start_ai_returns_500_on_failure(
+        self, docker_mock: mock.Mock, start_mock: mock.Mock
+    ) -> None:
+        docker_mock.return_value = mock.Mock()
+        start_mock.return_value = {
+            "success": False,
+            "messages": [],
+            "errors": ["Container not found."],
+        }
+        client = self._app().test_client()
+        response = client.post("/api/maintenance/ai/start")
+        self.assertEqual(500, response.status_code)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertIn("Container not found.", data["errors"])
 
 
 if __name__ == "__main__":

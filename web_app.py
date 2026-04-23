@@ -34,13 +34,121 @@ except ValueError:
 _AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
 _AI_STATUS_TTL = 30.0  # seconds between live probes
 
+# ── Docker / maintenance ──────────────────────────────────────────────────────
+
+_DOCKER_SOCKET = "/var/run/docker.sock"
+# Project name injected by compose; used to filter containers by label.
+_COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT_NAME", "title-entry-tool")
+# The four services this app is aware of.
+_MANAGED_SERVICES = ("title-entry-tool", "postgres", "ollama", "ollama-init")
+
+
+def _docker_client():
+    """Return a Docker SDK client, or None when the socket is unavailable."""
+    if not os.path.exists(_DOCKER_SOCKET):
+        return None
+    try:
+        import docker  # type: ignore[import-untyped]
+
+        client = docker.DockerClient(base_url=f"unix://{_DOCKER_SOCKET}")
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+
+def _get_service_containers(client) -> Dict[str, Any]:
+    """Return a dict keyed by service name with container state info."""
+    services: Dict[str, Any] = {name: None for name in _MANAGED_SERVICES}
+    try:
+        containers = client.containers.list(
+            all=True,
+            filters={"label": f"com.docker.compose.project={_COMPOSE_PROJECT}"},
+        )
+        for container in containers:
+            svc = container.labels.get("com.docker.compose.service")
+            if svc not in services:
+                continue
+            health_status = ""
+            health = (container.attrs.get("State") or {}).get("Health") or {}
+            if health:
+                health_status = health.get("Status", "")
+            services[svc] = {
+                "id": container.short_id,
+                "name": container.name,
+                "state": container.status,  # running | exited | created | …
+                "health": health_status,    # healthy | unhealthy | starting | ""
+            }
+    except Exception:
+        pass
+    return services
+
+
+def _get_service_logs(client, service: str, lines: int = 100) -> Dict[str, Any]:
+    """Return the most-recent *lines* log lines for a compose service."""
+    try:
+        containers = client.containers.list(
+            all=True,
+            filters={
+                "label": [
+                    f"com.docker.compose.project={_COMPOSE_PROJECT}",
+                    f"com.docker.compose.service={service}",
+                ]
+            },
+        )
+        if not containers:
+            return {"lines": [], "error": f"No container found for service '{service}'"}
+        raw = containers[0].logs(tail=lines, timestamps=True).decode(
+            "utf-8", errors="replace"
+        )
+        return {"lines": [ln for ln in raw.splitlines() if ln.strip()], "error": None}
+    except Exception:
+        return {"lines": [], "error": "Failed to retrieve logs. Check Docker socket availability."}
+
+
+def _start_ai_services(client) -> Dict[str, Any]:
+    """Start stopped ollama / ollama-init containers if they exist."""
+    messages: List[str] = []
+    errors: List[str] = []
+    for service in ("ollama", "ollama-init"):
+        try:
+            containers = client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        f"com.docker.compose.project={_COMPOSE_PROJECT}",
+                        f"com.docker.compose.service={service}",
+                    ]
+                },
+            )
+            if not containers:
+                errors.append(
+                    f"Container for '{service}' not found. "
+                    "Set COMPOSE_PROFILES=ai and redeploy the stack to create it."
+                )
+                continue
+            container = containers[0]
+            if container.status == "running":
+                messages.append(f"'{service}' is already running.")
+            else:
+                container.start()
+                messages.append(f"'{service}' started.")
+        except Exception:
+            errors.append(f"Could not start '{service}'. Check Docker socket and container status.")
+    return {"success": len(errors) == 0, "messages": messages, "errors": errors}
+
+
+# ── AI status ─────────────────────────────────────────────────────────────────
+
 
 def _check_ai_status() -> str:
     """Probe the configured AI endpoint and return its readiness.
 
     Returns one of:
         "not_configured" – provider is "tesseract"; AI calls are never made.
-        "ready"          – Ollama API responded successfully.
+        "ready"          – Ollama API responded and the configured model exists.
+        "loading"        – Ollama API responded but the model is not yet present
+                           (download in progress or not yet started).
         "unavailable"    – AI is configured but the endpoint did not respond.
 
     Results are cached for ``_AI_STATUS_TTL`` seconds so repeated page loads
@@ -54,16 +162,25 @@ def _check_ai_status() -> str:
         status = "not_configured"
     else:
         endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        model_base = os.getenv("AI_MODEL", "moondream").rsplit(":", 1)[0]
         try:
-            response = requests.get(f"{endpoint}/api/tags", timeout=1)
+            response = requests.get(f"{endpoint}/api/tags", timeout=2)
             response.raise_for_status()
-            status = "ready"
+            tags_data = response.json()
+            available = [
+                m.get("name", "").rsplit(":", 1)[0]
+                for m in tags_data.get("models", [])
+            ]
+            status = "ready" if model_base in available else "loading"
         except Exception:
             status = "unavailable"
 
     _AI_STATUS_CACHE["status"] = status
     _AI_STATUS_CACHE["checked_at"] = now
     return status
+
+
+# ── Text / field extraction ───────────────────────────────────────────────────
 
 _FIELD_NAMES: Tuple[str, ...] = ("state", "title_number", "vin", "vehicle_year")
 
@@ -256,6 +373,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.config["DEFAULT_STATE"] = default_state.strip().upper()
 
+    # ── Core endpoints ────────────────────────────────────────────────────────
+
     @app.route("/health")
     def health():
         return jsonify({"status": "ok"})
@@ -337,6 +456,67 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 context["error"] = "Record saved with validation errors."
 
         return render_template("index.html", **context)
+
+    # ── Maintenance endpoints ─────────────────────────────────────────────────
+
+    @app.route("/api/maintenance/containers")
+    def maintenance_containers():
+        client = _docker_client()
+        if client is None:
+            return jsonify(
+                {
+                    "docker_available": False,
+                    "services": {name: None for name in _MANAGED_SERVICES},
+                    "error": "Docker socket not available.",
+                }
+            )
+        return jsonify(
+            {
+                "docker_available": True,
+                "services": _get_service_containers(client),
+                "error": None,
+            }
+        )
+
+    @app.route("/api/maintenance/logs/<service>")
+    def maintenance_logs(service: str):
+        if service not in _MANAGED_SERVICES:
+            return jsonify({"error": "Unknown service.", "lines": []}), 400
+        client = _docker_client()
+        if client is None:
+            return (
+                jsonify({"error": "Docker socket not available.", "lines": []}),
+                503,
+            )
+        try:
+            lines = max(1, min(500, int(request.args.get("lines", "100"))))
+        except (TypeError, ValueError):
+            lines = 100
+        result = _get_service_logs(client, service, lines)
+        result["service"] = service
+        return jsonify(result)
+
+    @app.route("/api/maintenance/ai/start", methods=["POST"])
+    def maintenance_start_ai():
+        client = _docker_client()
+        if client is None:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "messages": [],
+                        "errors": [
+                            "Docker socket not available. "
+                            "Set COMPOSE_PROFILES=ai and redeploy the stack."
+                        ],
+                    }
+                ),
+                503,
+            )
+        # Invalidate the AI status cache so the next /api/status poll reflects reality.
+        _AI_STATUS_CACHE["checked_at"] = 0.0
+        result = _start_ai_services(client)
+        return jsonify(result), (200 if result["success"] else 500)
 
     return app
 
