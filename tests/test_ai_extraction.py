@@ -8,6 +8,7 @@ from PIL import Image
 
 from ai_extraction import (
     _call_ollama,
+    _crop_field_regions,
     _get_image_from_bytes,
     _image_to_base64_png,
     _merge_page_results,
@@ -341,11 +342,15 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         _norm_mock: mock.Mock,
         _call_mock: mock.Mock,
     ) -> None:
-        get_pages_mock.return_value = [_make_small_rgb_image(), _make_small_rgb_image()]
+        page_images = [_make_small_rgb_image(), _make_small_rgb_image()]
+        get_pages_mock.return_value = page_images
         result = extract_fields_with_ai("document.pdf", b"fake-pdf-bytes")
         # All calls failed → None
         self.assertIsNone(result)
-        self.assertEqual(2, _call_mock.call_count)
+        # Each page: 1 full-image call + 2 crop calls (from _crop_field_regions).
+        crops_per_page = len(_crop_field_regions(_make_small_rgb_image()))
+        expected_calls = len(page_images) * (1 + crops_per_page)
+        self.assertEqual(expected_calls, _call_mock.call_count)
 
     @mock.patch("ai_extraction._call_ollama", return_value=None)
     @mock.patch("ai_extraction._normalize_image", side_effect=lambda img, **kw: img)
@@ -368,6 +373,126 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         self.assertEqual("http://myollama:9999", call_args[0][1])
         self.assertEqual("llava", call_args[0][2])
         self.assertEqual(15, call_args[0][3])
+
+
+class CropFieldRegionsTests(unittest.TestCase):
+    def test_returns_two_crops(self) -> None:
+        image = _make_small_rgb_image(400, 300)
+        crops = _crop_field_regions(image)
+        self.assertEqual(2, len(crops))
+        for crop in crops:
+            self.assertIsInstance(crop, Image.Image)
+
+    def test_top_strip_spans_full_width(self) -> None:
+        image = _make_small_rgb_image(400, 300)
+        crops = _crop_field_regions(image)
+        top_strip = crops[0]
+        self.assertEqual(400, top_strip.width)
+        # ~12 % of 300 = 36 px
+        self.assertAlmostEqual(top_strip.height, int(300 * 0.12), delta=1)
+
+    def test_top_right_crop_is_narrower_than_full_image(self) -> None:
+        image = _make_small_rgb_image(400, 300)
+        crops = _crop_field_regions(image)
+        top_right = crops[1]
+        # ~15 % of 400 = 60 px wide
+        self.assertLess(top_right.width, 400)
+        self.assertAlmostEqual(top_right.width, int(400 * 0.15), delta=1)
+
+    def test_handles_small_image_without_error(self) -> None:
+        tiny = _make_small_rgb_image(10, 10)
+        crops = _crop_field_regions(tiny)
+        self.assertEqual(2, len(crops))
+        for crop in crops:
+            self.assertGreaterEqual(crop.width, 1)
+            self.assertGreaterEqual(crop.height, 1)
+
+    def test_crops_are_subregions_of_original(self) -> None:
+        """Each crop must fit entirely within the original image dimensions."""
+        image = _make_small_rgb_image(800, 600)
+        for crop in _crop_field_regions(image):
+            self.assertLessEqual(crop.width, 800)
+            self.assertLessEqual(crop.height, 600)
+
+
+class ExtractionSmokeTest(unittest.TestCase):
+    """End-to-end smoke test using a synthetic title-like image.
+
+    Verifies that the extraction pipeline (normalisation → base64 encoding →
+    AI call → response parsing → merge) correctly propagates a known result
+    without contacting a real Ollama endpoint.
+    """
+
+    _KNOWN_VIN = "1GNDT13S372145342"
+    _KNOWN_RESULT = {
+        "state": "MD",
+        "title_number": "58312391",
+        "vin": _KNOWN_VIN,
+        "vehicle_year": 2007,
+        "confidence": {
+            "state": 0.9,
+            "title_number": 0.95,
+            "vin": 0.95,
+            "vehicle_year": 0.9,
+        },
+    }
+
+    def _make_title_image_bytes(self) -> bytes:
+        """Return PNG bytes for a minimal synthetic vehicle title image."""
+        buf = io.BytesIO()
+        Image.new("RGB", (800, 600), color=(240, 240, 230)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    @mock.patch("ai_extraction._call_ollama")
+    def test_known_result_propagates_through_pipeline(
+        self, call_mock: mock.Mock
+    ) -> None:
+        call_mock.return_value = self._KNOWN_RESULT
+        result = extract_fields_with_ai("title.png", self._make_title_image_bytes())
+        self.assertIsNotNone(result)
+        self.assertEqual("MD", result["state"])
+        self.assertEqual("58312391", result["title_number"])
+        self.assertEqual(self._KNOWN_VIN, result["vin"])
+        self.assertEqual(2007, result["vehicle_year"])
+
+    @mock.patch("ai_extraction._call_ollama")
+    def test_crop_results_merged_with_full_image_result(
+        self, call_mock: mock.Mock
+    ) -> None:
+        """High-confidence crop result should beat low-confidence full-page result."""
+        low_conf_result = {
+            "state": "XX",
+            "title_number": "WRONG",
+            "vin": None,
+            "vehicle_year": None,
+            "confidence": {
+                "state": 0.4,
+                "title_number": 0.3,
+                "vin": 0.0,
+                "vehicle_year": 0.0,
+            },
+        }
+        high_conf_crop = {
+            "state": "MD",
+            "title_number": "58312391",
+            "vin": self._KNOWN_VIN,
+            "vehicle_year": 2007,
+            "confidence": {
+                "state": 0.9,
+                "title_number": 0.95,
+                "vin": 0.95,
+                "vehicle_year": 0.9,
+            },
+        }
+        # First call = full page (low confidence), subsequent calls = crops.
+        call_mock.side_effect = [low_conf_result, high_conf_crop, high_conf_crop]
+        result = extract_fields_with_ai("title.png", self._make_title_image_bytes())
+        self.assertIsNotNone(result)
+        # Crop values should win because they carry higher confidence.
+        self.assertEqual("MD", result["state"])
+        self.assertEqual("58312391", result["title_number"])
+        self.assertEqual(self._KNOWN_VIN, result["vin"])
+        self.assertEqual(2007, result["vehicle_year"])
 
 
 if __name__ == "__main__":

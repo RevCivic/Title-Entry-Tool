@@ -34,7 +34,7 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 | `DB_PASSWORD`             | *(empty)*                    | PostgreSQL password                                       |
 | `EXTRACTION_PROVIDER`     | `hybrid`                     | `tesseract`, `ai`, or `hybrid`                            |
 | `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                |
-| `AI_MODEL`                | `moondream`                  | Ollama model name (e.g. `moondream`, `llava`)             |
+| `AI_MODEL`                | `llava`                      | Ollama model name (e.g. `llava`, `llava:13b`)             |
 | `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call        |
 | `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review       |
 
@@ -115,7 +115,7 @@ docker compose up --build
 ```
 
 > **Disk space:** allocate at least 5 GB for the `ollama_data` volume
-> (`moondream` is ~1.5 GB; larger models such as `llava` require ~4 GB).
+> (`llava` is ~4 GB; a larger variant such as `llava:13b` requires ~8 GB).
 
 > **First AI run:** the `ollama-init` service downloads the configured model
 > (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
