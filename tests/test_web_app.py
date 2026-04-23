@@ -258,6 +258,31 @@ class RunExtractionTests(unittest.TestCase):
         self.assertEqual("NM", result["fields"]["state"])
         self.assertEqual([], result["low_confidence"])
 
+    @mock.patch(
+        "web_app.extract_fields_with_ai",
+        return_value={
+            "state": "NM",
+            "title_number": "ABC1234",
+            "vin": _GOOD_VIN,
+            "vehicle_year": 2003,
+            "confidence": {
+                "state": 0.9,
+                "title_number": 0.85,
+                "vin": 0.95,
+                "vehicle_year": 0.9,
+            },
+        },
+    )
+    @mock.patch("web_app.extract_text_from_upload")
+    def test_ai_provider_skips_tesseract_when_ai_succeeds(
+        self, ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="ai")
+        self.assertIsNotNone(result)
+        self.assertEqual("ai", result["source"])
+        self.assertEqual("", result["raw_text"])
+        ocr_mock.assert_not_called()
+
     @mock.patch("web_app.extract_fields_with_ai", return_value=None)
     @mock.patch("web_app.extract_text_from_upload", return_value=_GOOD_OCR)
     def test_ai_provider_falls_back_to_tesseract_when_ai_unavailable(
@@ -300,6 +325,31 @@ class RunExtractionTests(unittest.TestCase):
         self.assertIn(result["source"], ("ai", "hybrid"))
         self.assertEqual("TX", result["fields"]["state"])
         self.assertEqual(_GOOD_VIN, result["fields"]["vin"])
+
+    @mock.patch(
+        "web_app.extract_fields_with_ai",
+        return_value={
+            "state": "TX",
+            "title_number": "XYZ999",
+            "vin": _GOOD_VIN,
+            "vehicle_year": 2020,
+            "confidence": {
+                "state": 0.9,
+                "title_number": 0.8,
+                "vin": 0.95,
+                "vehicle_year": 0.9,
+            },
+        },
+    )
+    @mock.patch("web_app.extract_text_from_upload")
+    def test_hybrid_provider_skips_tesseract_when_ai_confident_for_all_fields(
+        self, ocr_mock: mock.Mock, _ai_mock: mock.Mock
+    ) -> None:
+        result = _run_extraction("title.png", b"bytes", provider="hybrid", threshold=0.6)
+        self.assertIsNotNone(result)
+        self.assertEqual("ai", result["source"])
+        self.assertEqual("", result["raw_text"])
+        ocr_mock.assert_not_called()
 
     @mock.patch(
         "web_app.extract_fields_with_ai",
