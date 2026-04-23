@@ -120,6 +120,17 @@ docker compose up --build
 > **First AI run:** the `ollama-init` service downloads the configured model
 > (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
 > uploads with OCR while the download completes.
+>
+> If AI setup does not complete, review both startup and model-pull logs:
+>
+> ```bash
+> docker compose logs ollama
+> docker compose logs ollama-init
+> ```
+>
+> The `ollama-init` container now waits for the Ollama API and emits explicit
+> diagnostics before retrying model pulls, so failed AI bootstraps leave
+> actionable logs without taking down the core app/database services.
 
 > **Image version:** set `OLLAMA_VERSION` in your `.env` (or stack environment)
 > to pin a specific release tag, e.g. `OLLAMA_VERSION=0.21.1`.  Both the
@@ -160,7 +171,7 @@ volume mounted at `/app/data`.
 | `GET /health`                         | GET    | Returns `{"status": "ok"}` when the Flask app is running.                          |
 | `GET /api/status`                     | GET    | Returns extraction provider and AI readiness (`ready` \| `loading` \| `unavailable` \| `not_configured`). |
 | `GET /api/maintenance/containers`     | GET    | Returns state/health of all compose services (requires Docker socket mount).       |
-| `GET /api/maintenance/logs/<service>` | GET    | Returns recent log lines for a service (`?lines=N`, default 100, max 500).        |
+| `GET /api/maintenance/logs/<service>` | GET    | Returns recent log lines for a service plus container metadata and detailed retrieval errors (`?lines=N`, default 100, max 500). |
 | `POST /api/maintenance/ai/start`      | POST   | Starts stopped `ollama` and `ollama-init` containers (requires Docker socket mount). |
 
 > **AI status values:**

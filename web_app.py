@@ -97,13 +97,52 @@ def _get_service_logs(client, service: str, lines: int = 100) -> Dict[str, Any]:
             },
         )
         if not containers:
-            return {"lines": [], "error": f"No container found for service '{service}'"}
-        raw = containers[0].logs(tail=lines, timestamps=True).decode(
-            "utf-8", errors="replace"
+            return {
+                "lines": [],
+                "error": (
+                    f"No container found for service '{service}'. "
+                    "The container may have been removed after a failed deployment."
+                ),
+            }
+
+        # Prefer the newest container first in case old service revisions remain.
+        containers.sort(
+            key=lambda container: (container.attrs.get("Created") or ""),
+            reverse=True,
         )
-        return {"lines": [ln for ln in raw.splitlines() if ln.strip()], "error": None}
+
+        container_retrieval_errors: List[str] = []
+        for container in containers:
+            try:
+                raw = container.logs(tail=lines, timestamps=True).decode(
+                    "utf-8", errors="replace"
+                )
+                return {
+                    "lines": [ln for ln in raw.splitlines() if ln.strip()],
+                    "error": None,
+                    "container": {
+                        "id": container.short_id,
+                        "name": container.name,
+                        "state": container.status,
+                    },
+                }
+            except Exception as exc:
+                container_retrieval_errors.append(
+                    f"{container.name} ({container.short_id}): {type(exc).__name__}"
+                )
+
+        return {
+            "lines": [],
+            "error": (
+                "Failed to retrieve logs from available containers. "
+                f"Details: {'; '.join(container_retrieval_errors)}"
+            ),
+        }
     except Exception:
-        return {"lines": [], "error": "Failed to retrieve logs. Check Docker socket availability."}
+        return {
+            "lines": [],
+            "error": "Failed to retrieve logs. Check Docker socket availability and container lifecycle events.",
+        }
 
 
 def _start_ai_services(client) -> Dict[str, Any]:
