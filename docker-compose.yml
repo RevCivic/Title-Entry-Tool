@@ -61,9 +61,7 @@ services:
   # extraction is used automatically (when EXTRACTION_PROVIDER=hybrid or ai).
 
   ollama:
-    # Pin to a specific release in production to prevent unexpected upgrades,
-    # e.g.: image: ollama/ollama:0.6.8
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.21.1
     profiles: [ai]
     restart: unless-stopped
     volumes:
@@ -84,8 +82,8 @@ services:
   ollama-init:
     # One-shot container: pulls the configured model into the shared ollama_data
     # volume so it is available to the ollama service on next startup.
-    # Pin this image in sync with the ollama service above.
-    image: ollama/ollama:latest
+    # Keep this image pinned in sync with the ollama service above.
+    image: ollama/ollama:0.21.1
     profiles: [ai]
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]

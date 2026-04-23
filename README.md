@@ -121,9 +121,10 @@ docker compose up --build
 > (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
 > uploads with OCR while the download completes.
 
-> **Image pinning:** the compose file uses `ollama/ollama:latest`.  For
-> production deployments, pin to a specific release, e.g.
-> `image: ollama/ollama:0.6.8`, to prevent unexpected upgrades.
+> **Image pinning:** the compose file pins `ollama/ollama:0.21.1` (current
+> stable release).  To upgrade, update the version tag in both `ollama` and
+> `ollama-init` services in `docker-compose.yml` (and `docker-compose.gpu.yml`
+> if used) to the same new version.
 
 #### CLI alternative
 
