@@ -1,4 +1,23 @@
 services:
   ollama:
-    # Assign all available GPUs to Ollama (override to a specific device if needed).
-    gpus: all
+    # Override the CPU-first default from docker-compose.yml to let Ollama
+    # use all available NVIDIA GPUs.
+    #
+    # Prerequisites:
+    #   - NVIDIA GPU present in the host
+    #   - NVIDIA Container Toolkit installed  (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+    #
+    # Usage (env-var approach, recommended for Portainer):
+    #   COMPOSE_PROFILES=ai  and layer this file in the stack's Compose path list
+    #
+    # Usage (CLI):
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up --build
+    environment:
+      OLLAMA_NUM_GPU: ""   # unset → Ollama auto-detects and uses all available GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -152,12 +152,21 @@ Data is persisted in the `postgres_data` and `ollama_data` named volumes.
 Application artifacts (e.g. exported CSVs) are stored in the `app_data` named
 volume mounted at `/app/data`.
 
-### Health and status endpoints
+### Health, status, and maintenance endpoints
 
-| Endpoint      | Description                                                   |
-|---------------|---------------------------------------------------------------|
-| `GET /health` | Returns `{"status": "ok"}` when the Flask app is running.    |
-| `GET /api/status` | Returns the configured extraction provider and current AI readiness (`ready` \| `unavailable` \| `not_configured`). |
+| Endpoint                              | Method | Description                                                                         |
+|---------------------------------------|--------|-------------------------------------------------------------------------------------|
+| `GET /health`                         | GET    | Returns `{"status": "ok"}` when the Flask app is running.                          |
+| `GET /api/status`                     | GET    | Returns extraction provider and AI readiness (`ready` \| `loading` \| `unavailable` \| `not_configured`). |
+| `GET /api/maintenance/containers`     | GET    | Returns state/health of all compose services (requires Docker socket mount).       |
+| `GET /api/maintenance/logs/<service>` | GET    | Returns recent log lines for a service (`?lines=N`, default 100, max 500).        |
+| `POST /api/maintenance/ai/start`      | POST   | Starts stopped `ollama` and `ollama-init` containers (requires Docker socket mount). |
+
+> **AI status values:**
+> - `ready` – Ollama API is reachable and the configured model is available.
+> - `loading` – Ollama is running but the model download is still in progress.
+> - `unavailable` – Ollama did not respond (services not started).
+> - `not_configured` – `EXTRACTION_PROVIDER=tesseract`; AI is intentionally disabled.
 
 The container healthcheck polls `/health` so orchestrators (Docker Compose,
 Kubernetes, etc.) can detect real application readiness.

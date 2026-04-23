@@ -35,8 +35,14 @@ services:
       AI_MODEL: ${AI_MODEL:-moondream}
       AI_TIMEOUT: ${AI_TIMEOUT:-60}
       AI_CONFIDENCE_THRESHOLD: ${AI_CONFIDENCE_THRESHOLD:-0.6}
+      # Used by the maintenance panel to filter containers by compose project.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-title-entry-tool}
     volumes:
       - app_data:/app/data
+      # Docker socket – gives the maintenance panel read/start access to
+      # sibling containers.  Remove this volume if you do not need the
+      # in-app maintenance features.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +70,9 @@ services:
       - ollama_data:/root/.ollama
     environment:
       OLLAMA_KEEP_ALIVE: "24h"
+      # CPU-first default: set to "" or remove in docker-compose.gpu.yml to
+      # let Ollama auto-detect GPU availability.
+      OLLAMA_NUM_GPU: "0"
     healthcheck:
       # Checks that the Ollama HTTP API is responsive (model need not be loaded yet).
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags >/dev/null 2>&1"]
@@ -82,17 +91,30 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Pulling model: ${AI_MODEL:-moondream}"
-        if ollama pull "${AI_MODEL:-moondream}"; then
-          echo "Model '${AI_MODEL:-moondream}' pulled successfully."
-        else
-          echo "ERROR: Failed to pull model '${AI_MODEL:-moondream}'." \
-               "Check the model name, network connectivity, and available disk space" \
-               "on the volume backing ollama_data." >&2
-          exit 1
-        fi
+        MODEL="${AI_MODEL:-moondream}"
+        HOST="${OLLAMA_HOST:-http://ollama:11434}"
+        HOST="${HOST%/}"
+        echo "Pulling model '${MODEL}' from ${HOST} ..."
+
+        # Retry up to 3 times with a short back-off.  The depends_on
+        # service_healthy condition means the API should be reachable, but
+        # retrying guards against transient timing issues.
+        for attempt in 1 2 3; do
+          echo "  attempt ${attempt}/3"
+          if OLLAMA_HOST="${HOST}" ollama pull "${MODEL}"; then
+            echo "Model '${MODEL}' pulled successfully."
+            exit 0
+          fi
+          if [ "${attempt}" -lt 3 ]; then
+            sleep 5
+          fi
+        done
+
+        echo "ERROR: failed to pull model '${MODEL}' after 3 attempts." \
+             "Check the model name, network connectivity, and available disk" \
+             "space on the ollama_data volume." >&2
+        exit 1
     environment:
-      # Tells the Ollama CLI to connect to the running server container.
       OLLAMA_HOST: http://ollama:11434
       AI_MODEL: ${AI_MODEL:-moondream}
     depends_on:
