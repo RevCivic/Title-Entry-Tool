@@ -121,9 +121,10 @@ docker compose up --build
 > (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
 > uploads with OCR while the download completes.
 
-> **Image pinning:** the compose file uses `ollama/ollama:latest`.  For
-> production deployments, pin to a specific release, e.g.
-> `image: ollama/ollama:0.6.8`, to prevent unexpected upgrades.
+> **Image version:** set `OLLAMA_VERSION` in your `.env` (or stack environment)
+> to pin a specific release tag, e.g. `OLLAMA_VERSION=0.21.1`.  Both the
+> `ollama` and `ollama-init` services share this variable, so one change
+> updates both.  Leave it unset (or `latest`) to always pull the newest image.
 
 #### CLI alternative
 
