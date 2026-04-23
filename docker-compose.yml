@@ -91,26 +91,26 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        MODEL="${AI_MODEL:-moondream}"
-        HOST="${OLLAMA_HOST:-http://ollama:11434}"
-        HOST="${HOST%/}"
-        echo "Pulling model '${MODEL}' from ${HOST} ..."
+        MODEL="$${AI_MODEL:-moondream}"
+        HOST="$${OLLAMA_HOST:-http://ollama:11434}"
+        HOST="$${HOST%/}"
+        echo "Pulling model '$${MODEL}' from $${HOST} ..."
 
         # Retry up to 3 times with a short back-off.  The depends_on
         # service_healthy condition means the API should be reachable, but
         # retrying guards against transient timing issues.
         for attempt in 1 2 3; do
-          echo "  attempt ${attempt}/3"
-          if OLLAMA_HOST="${HOST}" ollama pull "${MODEL}"; then
-            echo "Model '${MODEL}' pulled successfully."
+          echo "  attempt $${attempt}/3"
+          if OLLAMA_HOST="$${HOST}" ollama pull "$${MODEL}"; then
+            echo "Model '$${MODEL}' pulled successfully."
             exit 0
           fi
-          if [ "${attempt}" -lt 3 ]; then
+          if [ "$${attempt}" -lt 3 ]; then
             sleep 5
           fi
         done
 
-        echo "ERROR: failed to pull model '${MODEL}' after 3 attempts." \
+        echo "ERROR: failed to pull model '$${MODEL}' after 3 attempts." \
              "Check the model name, network connectivity, and available disk" \
              "space on the ollama_data volume." >&2
         exit 1
