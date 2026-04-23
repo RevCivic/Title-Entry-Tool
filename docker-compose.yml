@@ -72,12 +72,14 @@ services:
       # let Ollama auto-detect GPU availability.
       OLLAMA_NUM_GPU: "0"
     healthcheck:
-      # Checks that the Ollama HTTP API is responsive (model need not be loaded yet).
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags >/dev/null 2>&1"]
+      # Use the built-in CLI instead of curl so this check remains valid across
+      # Ollama image changes where curl may not be present.
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
       interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
+      timeout: 10s
+      retries: 12
+      # Give Ollama extra startup time on slower hosts before marking unhealthy.
+      start_period: 90s
 
   ollama-init:
     # One-shot container: pulls the configured model into the shared ollama_data
@@ -92,11 +94,35 @@ services:
         MODEL="$${AI_MODEL:-moondream}"
         HOST="$${OLLAMA_HOST:-http://ollama:11434}"
         HOST="$${HOST%/}"
-        echo "Pulling model '$${MODEL}' from $${HOST} ..."
+        echo "Preparing to pull model '$${MODEL}' from $${HOST} ..."
+
+        # Wait for the Ollama API to become responsive. We intentionally
+        # perform this here (instead of requiring service_healthy) so orchestration
+        # layers don't fail stack deployment before useful diagnostics are logged.
+        API_READY=0
+        for attempt in $$(seq 1 45); do
+          if OLLAMA_HOST="$${HOST}" ollama list >/dev/null 2>&1; then
+            API_READY=1
+            echo "Ollama API is reachable."
+            break
+          fi
+          echo "Waiting for Ollama API ... attempt $${attempt}/45"
+          sleep 2
+        done
+
+        if [ "$${API_READY}" -ne 1 ]; then
+          echo "ERROR: Ollama API did not become reachable in time." \
+               "Check 'docker compose logs ollama' for startup failures and host" \
+               "resource constraints (CPU/RAM/disk)." >&2
+          # Exit 0 so the core stack stays running and diagnostics remain available.
+          exit 0
+        fi
+
+        echo "Pulling model '$${MODEL}' ..."
 
         # Retry up to 3 times with a short back-off.  The depends_on
-        # service_healthy condition means the API should be reachable, but
-        # retrying guards against transient timing issues.
+        # condition only guarantees the container has started; retrying guards
+        # against transient timing/network issues while pulling.
         for attempt in 1 2 3; do
           echo "  attempt $${attempt}/3"
           if OLLAMA_HOST="$${HOST}" ollama pull "$${MODEL}"; then
@@ -121,7 +147,9 @@ services:
       AI_MODEL: ${AI_MODEL:-moondream}
     depends_on:
       ollama:
-        condition: service_healthy
+        # Keep deployment resilient: start once Ollama container is up, then do
+        # explicit readiness polling in the init script above with detailed logs.
+        condition: service_started
 
 volumes:
   postgres_data:
