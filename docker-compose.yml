@@ -99,21 +99,21 @@ services:
         # Wait for the Ollama API to become responsive. We intentionally
         # perform this here (instead of requiring service_healthy) so orchestration
         # layers don't fail stack deployment before useful diagnostics are logged.
+        OLLAMA_API_WAIT_ATTEMPTS=45
+        OLLAMA_API_WAIT_SECONDS=2
         API_READY=0
-        for attempt in $$(seq 1 45); do
+        for attempt in $$(seq 1 "$${OLLAMA_API_WAIT_ATTEMPTS}"); do
           if OLLAMA_HOST="$${HOST}" ollama list >/dev/null 2>&1; then
             API_READY=1
             echo "Ollama API is reachable."
             break
           fi
-          echo "Waiting for Ollama API ... attempt $${attempt}/45"
-          sleep 2
+          echo "Waiting for Ollama API ... attempt $${attempt}/$${OLLAMA_API_WAIT_ATTEMPTS}"
+          sleep "$${OLLAMA_API_WAIT_SECONDS}"
         done
 
         if [ "$${API_READY}" -ne 1 ]; then
-          echo "ERROR: Ollama API did not become reachable in time." \
-               "Check 'docker compose logs ollama' for startup failures and host" \
-               "resource constraints (CPU/RAM/disk)." >&2
+          echo "ERROR: Ollama API did not become reachable after $${OLLAMA_API_WAIT_ATTEMPTS} attempts (sleep $${OLLAMA_API_WAIT_SECONDS}s between attempts). Check 'docker compose logs ollama' for startup failures and host resource constraints (CPU/RAM/disk)." >&2
           # Exit 0 so the core stack stays running and diagnostics remain available.
           exit 0
         fi

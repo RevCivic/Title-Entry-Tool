@@ -111,7 +111,7 @@ def _get_service_logs(client, service: str, lines: int = 100) -> Dict[str, Any]:
             reverse=True,
         )
 
-        retrieval_errors: List[str] = []
+        container_retrieval_errors: List[str] = []
         for container in containers:
             try:
                 raw = container.logs(tail=lines, timestamps=True).decode(
@@ -127,19 +127,22 @@ def _get_service_logs(client, service: str, lines: int = 100) -> Dict[str, Any]:
                     },
                 }
             except Exception as exc:
-                retrieval_errors.append(
-                    f"{container.name} ({container.short_id}): {exc}"
+                container_retrieval_errors.append(
+                    f"{container.name} ({container.short_id}): {type(exc).__name__}"
                 )
 
         return {
             "lines": [],
             "error": (
                 "Failed to retrieve logs from available containers. "
-                f"Details: {'; '.join(retrieval_errors)}"
+                f"Details: {'; '.join(container_retrieval_errors)}"
             ),
         }
-    except Exception as exc:
-        return {"lines": [], "error": f"Failed to retrieve logs: {exc}"}
+    except Exception:
+        return {
+            "lines": [],
+            "error": "Failed to retrieve logs. Check Docker socket availability and container lifecycle events.",
+        }
 
 
 def _start_ai_services(client) -> Dict[str, Any]:
