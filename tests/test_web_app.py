@@ -11,9 +11,11 @@ from web_app import (
     _docker_client,
     _extract_text_from_image,
     _extract_text_from_pdf,
+    _get_ai_pull_progress,
     _get_service_containers,
     _get_service_logs,
     _get_word_confidences,
+    _parse_pull_progress_from_logs,
     _run_extraction,
     _start_ai_services,
     _tesseract_fields_and_confidence,
@@ -677,5 +679,138 @@ class MaintenanceEndpointTests(unittest.TestCase):
         self.assertIn("Container not found.", data["errors"])
 
 
+class DiagnosticsPageTests(unittest.TestCase):
+    """Tests for the /diagnostics page and /api/diagnostics/ai-progress endpoint."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    def test_diagnostics_page_renders(self) -> None:
+        client = self._app().test_client()
+        response = client.get("/diagnostics")
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Diagnostics", response.data)
+
+    @mock.patch("web_app._check_ai_status", return_value="ready")
+    def test_ai_progress_endpoint_returns_ready_status(self, _mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        response = client.get("/api/diagnostics/ai-progress")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("ready", data["ai_status"])
+        self.assertIn("extraction_provider", data)
+        self.assertIn("ai_model", data)
+        self.assertIn("ai_endpoint", data)
+        self.assertIsNone(data["pull_progress"])
+
+    @mock.patch("web_app._get_ai_pull_progress")
+    @mock.patch("web_app._check_ai_status", return_value="loading")
+    def test_ai_progress_endpoint_includes_pull_progress_when_loading(
+        self, _status_mock: mock.Mock, progress_mock: mock.Mock
+    ) -> None:
+        progress_mock.return_value = {
+            "available": True,
+            "percent": 42.0,
+            "status_message": "pulling layer",
+            "current_bytes": 420000000,
+            "total_bytes": 1000000000,
+            "layers": 3,
+        }
+        client = self._app().test_client()
+        response = client.get("/api/diagnostics/ai-progress")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("loading", data["ai_status"])
+        pp = data["pull_progress"]
+        self.assertIsNotNone(pp)
+        self.assertEqual(42.0, pp["percent"])
+        self.assertEqual(3, pp["layers"])
+        progress_mock.assert_called_once()
+
+    @mock.patch("web_app._check_ai_status", return_value="unavailable")
+    def test_ai_progress_endpoint_no_pull_progress_when_unavailable(
+        self, _mock: mock.Mock
+    ) -> None:
+        client = self._app().test_client()
+        response = client.get("/api/diagnostics/ai-progress")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("unavailable", data["ai_status"])
+        self.assertIsNone(data["pull_progress"])
+
+
+class PullProgressParsingTests(unittest.TestCase):
+    """Tests for _parse_pull_progress_from_logs."""
+
+    def setUp(self) -> None:
+        from web_app import _parse_pull_progress_from_logs
+        self._parse = _parse_pull_progress_from_logs
+
+    def test_parses_layer_progress_from_json_lines(self) -> None:
+        lines = [
+            '{"status":"pulling manifest"}',
+            '{"status":"pulling abc123","digest":"sha256:abc","total":1000,"completed":400}',
+            '{"status":"pulling abc123","digest":"sha256:abc","total":1000,"completed":800}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual(80.0, result["percent"])
+        self.assertEqual(800, result["current_bytes"])
+        self.assertEqual(1000, result["total_bytes"])
+        self.assertEqual(1, result["layers"])
+        self.assertEqual("pulling abc123", result["status_message"])
+
+    def test_aggregates_multiple_layers(self) -> None:
+        lines = [
+            '{"status":"pulling layer1","digest":"sha256:aaa","total":1000,"completed":1000}',
+            '{"status":"pulling layer2","digest":"sha256:bbb","total":1000,"completed":500}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual(75.0, result["percent"])
+        self.assertEqual(1500, result["current_bytes"])
+        self.assertEqual(2000, result["total_bytes"])
+        self.assertEqual(2, result["layers"])
+
+    def test_handles_timestamped_docker_log_lines(self) -> None:
+        lines = [
+            '2024-01-01T00:00:00.000000000Z {"status":"pulling manifest"}',
+            '2024-01-01T00:00:01.000000000Z {"status":"pulling abc","digest":"sha256:xyz","total":500,"completed":250}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual(50.0, result["percent"])
+
+    def test_returns_none_percent_when_no_total(self) -> None:
+        lines = ['{"status":"pulling manifest"}']
+        result = self._parse(lines)
+        self.assertIsNone(result["percent"])
+        self.assertEqual(0, result["total_bytes"])
+        self.assertEqual(0, result["layers"])
+
+    def test_handles_empty_log_lines(self) -> None:
+        result = self._parse([])
+        self.assertIsNone(result["percent"])
+        self.assertEqual(0, result["layers"])
+        self.assertEqual("", result["status_message"])
+
+    def test_uses_last_status_from_plain_text_lines(self) -> None:
+        lines = [
+            'some plain text line',
+            'verifying sha256 digest',
+        ]
+        result = self._parse(lines)
+        self.assertEqual("verifying sha256 digest", result["status_message"])
+
+    def test_handles_malformed_json_gracefully(self) -> None:
+        lines = [
+            '{"status": "ok"}',
+            '{not valid json',
+            '{"status":"pulling x","digest":"sha256:d","total":100,"completed":50}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual(50.0, result["percent"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

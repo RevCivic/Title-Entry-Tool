@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 import re
 import time
@@ -242,6 +243,93 @@ def _check_ai_status() -> str:
     _AI_STATUS_CACHE["status"] = status
     _AI_STATUS_CACHE["checked_at"] = now
     return status
+
+
+def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
+    """Parse Ollama model-pull progress from ``ollama-init`` container log lines.
+
+    Ollama streams JSON objects during a pull, one per line.  Docker timestamps
+    prepend each line so the parser skips to the first ``{`` before decoding.
+    Layer totals/completed values are accumulated across all digests to produce
+    an aggregate download percentage.
+
+    Returns a dict with keys:
+        percent        – 0-100 float, or None when total is unknown
+        status_message – last human-readable status string seen in the logs
+        current_bytes  – total bytes downloaded so far
+        total_bytes    – total bytes expected across all layers
+        layers         – number of distinct layer digests seen
+    """
+    layer_totals: Dict[str, int] = {}
+    layer_completed: Dict[str, int] = {}
+    last_status = ""
+
+    for line in log_lines:
+        line = line.strip()
+        try:
+            json_start = line.index("{")
+            json_part = line[json_start:]
+        except ValueError:
+            # Plain-text log line – keep it as a fallback status message.
+            if line:
+                last_status = line
+            continue
+        try:
+            data = json.loads(json_part)
+        except Exception:
+            if line:
+                last_status = line
+            continue
+
+        status = data.get("status", "")
+        if status:
+            last_status = status
+
+        digest = data.get("digest", "")
+        total = data.get("total")
+        completed = data.get("completed")
+        if digest and total is not None:
+            layer_totals[digest] = int(total)
+            layer_completed[digest] = int(completed) if completed is not None else 0
+
+    total_bytes = sum(layer_totals.values())
+    current_bytes = sum(layer_completed.values())
+    percent = round(current_bytes / total_bytes * 100, 1) if total_bytes > 0 else None
+
+    return {
+        "percent": percent,
+        "status_message": last_status,
+        "current_bytes": current_bytes,
+        "total_bytes": total_bytes,
+        "layers": len(layer_totals),
+    }
+
+
+def _get_ai_pull_progress() -> Dict[str, Any]:
+    """Return model-pull progress by examining recent ``ollama-init`` logs."""
+    client = _docker_client()
+    if client is None:
+        return {
+            "available": False,
+            "percent": None,
+            "status_message": "Docker socket not available",
+            "current_bytes": 0,
+            "total_bytes": 0,
+            "layers": 0,
+        }
+    logs_result = _get_service_logs(client, "ollama-init", lines=300)
+    if logs_result.get("error") or not logs_result.get("lines"):
+        return {
+            "available": True,
+            "percent": None,
+            "status_message": logs_result.get("error") or "No log output available",
+            "current_bytes": 0,
+            "total_bytes": 0,
+            "layers": 0,
+        }
+    progress = _parse_pull_progress_from_logs(logs_result["lines"])
+    progress["available"] = True
+    return progress
 
 
 # ── Text / field extraction ───────────────────────────────────────────────────
@@ -637,6 +725,37 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 "ai_status": _check_ai_status(),
             }
         )
+
+    @app.route("/diagnostics")
+    def diagnostics():
+        """Render the diagnostics page."""
+        return render_template("diagnostics.html")
+
+    @app.route("/api/diagnostics/ai-progress")
+    def api_ai_progress():
+        """Return enriched AI status including pull-progress data from logs.
+
+        Response keys:
+            ai_status          – "ready" | "loading" | "unavailable" | "not_configured"
+            extraction_provider – value of EXTRACTION_PROVIDER env var
+            ai_model           – configured AI_MODEL value
+            ai_endpoint        – configured AI_ENDPOINT value
+            pull_progress      – progress dict (only populated when status == "loading"),
+                                 or None otherwise
+        """
+        status = _check_ai_status()
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        model = os.getenv("AI_MODEL", "moondream")
+        result: Dict[str, Any] = {
+            "ai_status": status,
+            "extraction_provider": EXTRACTION_PROVIDER,
+            "ai_model": model,
+            "ai_endpoint": endpoint,
+            "pull_progress": None,
+        }
+        if status == "loading":
+            result["pull_progress"] = _get_ai_pull_progress()
+        return jsonify(result)
 
     @app.route("/", methods=["GET", "POST"])
     def index():
