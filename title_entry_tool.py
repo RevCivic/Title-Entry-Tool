@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 import psycopg2.extensions
 import psycopg2.extras
+import psycopg2.sql
 
 VIN_ALLOWED = set("0123456789ABCDEFGHJKLMNPRSTUVWXYZ")
 VIN_TRANSLITERATION = {
@@ -116,11 +117,15 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
         for col_name, col_type in _extended_columns:
             if col_name not in _ALLOWED_EXTENDED_COLUMNS:
                 continue  # Skip any unknown column name as a safety guard.
+            # Use psycopg2.sql.Identifier to safely compose the identifier
+            # even though col_name is already validated above.
             cursor.execute(
-                f"""
-                ALTER TABLE title_records
-                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
-                """
+                psycopg2.sql.SQL(
+                    "ALTER TABLE title_records ADD COLUMN IF NOT EXISTS {} {}"
+                ).format(
+                    psycopg2.sql.Identifier(col_name),
+                    psycopg2.sql.SQL(col_type),
+                )
             )
 
         # Corrections table – ground-truth annotation workflow.

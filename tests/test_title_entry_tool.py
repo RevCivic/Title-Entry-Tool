@@ -172,7 +172,12 @@ class TitleEntryToolTests(unittest.TestCase):
         initialize_database(connection)
         # Should have called execute multiple times (one CREATE TABLE + ALTER + corrections + back)
         self.assertGreater(cursor.execute.call_count, 1)
-        all_sql = " ".join(call[0][0] for call in cursor.execute.call_args_list)
+        # Collect all SQL strings (some may be psycopg2.sql.Composed objects).
+        sql_parts = []
+        for call in cursor.execute.call_args_list:
+            arg = call[0][0]
+            sql_parts.append(str(arg) if isinstance(arg, str) else repr(arg))
+        all_sql = " ".join(sql_parts)
         self.assertIn("title_records", all_sql)
         self.assertIn("corrections", all_sql)
         self.assertIn("title_back_records", all_sql)
