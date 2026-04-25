@@ -34,7 +34,7 @@ ExtractionResult = Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 DEFAULT_AI_ENDPOINT = "http://ollama:11434"
-DEFAULT_AI_MODEL = "moondream2"
+DEFAULT_AI_MODEL = "moondream"
 DEFAULT_AI_TIMEOUT = 60
 DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.6
 
