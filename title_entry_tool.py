@@ -107,7 +107,15 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             ("state_layout_version", "TEXT"),
             ("source_file_path", "TEXT"),
         ]
+        # Use a fixed allowlist of column definitions to prevent any SQL injection.
+        _ALLOWED_EXTENDED_COLUMNS = {
+            "make", "model", "body_style", "color", "odometer",
+            "owner_name", "owner_address", "purchase_price",
+            "sale_date", "issue_date", "state_layout_version", "source_file_path",
+        }
         for col_name, col_type in _extended_columns:
+            if col_name not in _ALLOWED_EXTENDED_COLUMNS:
+                continue  # Skip any unknown column name as a safety guard.
             cursor.execute(
                 f"""
                 ALTER TABLE title_records
@@ -350,9 +358,17 @@ def export_validated_to_csv_by_date(
         conditions.append("created_at >= %s")
         params.append(date_from)
     if date_to:
-        # Include the entire ``date_to`` day.
+        # Advance to the day after date_to so ``created_at < <next_day>``
+        # includes the full last day without fragile string concatenation.
+        try:
+            from datetime import date as _date, timedelta
+            next_day = (
+                _date.fromisoformat(date_to) + timedelta(days=1)
+            ).isoformat()
+        except ValueError:
+            next_day = date_to
         conditions.append("created_at < %s")
-        params.append(date_to + "T23:59:59.999999")
+        params.append(next_day)
 
     where_clause = " AND ".join(conditions)
     fieldnames = [

@@ -59,7 +59,7 @@ def _images_from_bytes(filename: str, file_bytes: bytes) -> List[Image.Image]:
 
 
 def _parse_aamva_pdf417(data: str) -> BarcodeResult:
-    """Parse an AAMVA-format PDF417 barcode (used on US driver licences and
+    """Parse an AAMVA-format PDF417 barcode (used on US driver licenses and
     some title barcodes).
 
     Returns a dict with whatever fields could be extracted.

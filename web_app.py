@@ -435,7 +435,10 @@ def _save_upload(file_bytes: bytes, original_filename: str) -> Optional[str]:
     """
     try:
         os.makedirs(UPLOADS_DIR, exist_ok=True)
-        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
+        # Validate extension against the application allowlist to prevent
+        # path injection via a crafted filename.
+        raw_ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+        ext = raw_ext if raw_ext in ALLOWED_EXTENSIONS else "bin"
         unique_name = f"{uuid.uuid4().hex}.{ext}"
         path = os.path.join(UPLOADS_DIR, unique_name)
         with open(path, "wb") as f:
@@ -654,7 +657,6 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
             # Save the uploaded file for the review workflow.
             source_file_path = _save_upload(file_bytes, upload.filename or "upload")
-            image_hash = _sha256(file_bytes)
 
             connection = create_connection_from_env()
             try:
@@ -740,7 +742,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
             if request.method == "POST":
                 corrections_saved = 0
-                image_hash = record.get("source_file_path") or ""
+                source_path = record.get("source_file_path") or ""
                 for field in _FIELD_NAMES:
                     corrected = request.form.get(f"field_{field}", "").strip()
                     if corrected:
@@ -750,7 +752,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                             field_name=field,
                             original_value=str(record.get(field) or ""),
                             corrected_value=corrected,
-                            image_hash=image_hash,
+                            image_hash=source_path,
                             is_ground_truth=bool(request.form.get("approve")),
                         )
                         corrections_saved += 1
@@ -821,8 +823,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
         try:
             pdf_path = generate_nmvitis_pdf(record, output_dir=PDFS_DIR)
-        except Exception as exc:
-            return jsonify({"error": f"PDF generation failed: {exc}"}), 500
+        except Exception:
+            return jsonify({"error": "PDF generation failed. Check server logs."}), 500
 
         return send_file(
             pdf_path,
@@ -910,8 +912,13 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     @app.route("/uploads/<path:filename>")
     def serve_upload(filename: str):
         """Serve a saved upload for display in the review UI."""
+        # Use basename to prevent path traversal; verify the resolved path
+        # stays within UPLOADS_DIR.
         safe_name = os.path.basename(filename)
-        file_path = os.path.join(UPLOADS_DIR, safe_name)
+        file_path = os.path.realpath(os.path.join(UPLOADS_DIR, safe_name))
+        uploads_real = os.path.realpath(UPLOADS_DIR)
+        if not file_path.startswith(uploads_real + os.sep) and file_path != uploads_real:
+            return jsonify({"error": "File not found."}), 404
         if not os.path.isfile(file_path):
             return jsonify({"error": "File not found."}), 404
         return send_file(file_path)

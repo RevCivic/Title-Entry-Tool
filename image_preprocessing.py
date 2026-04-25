@@ -1,7 +1,7 @@
 """Image pre-processing for vehicle title documents.
 
 Provides deskew, Otsu binarization, document-border detection, and
-perspective correction to maximise OCR and AI extraction accuracy for
+perspective correction to maximize OCR and AI extraction accuracy for
 scanned or phone-captured title images.
 """
 
