@@ -32,7 +32,7 @@ services:
       DEFAULT_STATE: ${DEFAULT_STATE:-NM}
       EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-hybrid}
       AI_ENDPOINT: ${AI_ENDPOINT:-http://ollama:11434}
-      AI_MODEL: ${AI_MODEL:-llava}
+      AI_MODEL: ${AI_MODEL:-moondream2}
       AI_TIMEOUT: ${AI_TIMEOUT:-60}
       AI_CONFIDENCE_THRESHOLD: ${AI_CONFIDENCE_THRESHOLD:-0.6}
       # Used by the maintenance panel to filter containers by compose project.
@@ -91,7 +91,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        MODEL="$${AI_MODEL:-llava}"
+        MODEL="$${AI_MODEL:-moondream2}"
         HOST="$${OLLAMA_HOST:-http://ollama:11434}"
         HOST="$${HOST%/}"
         echo "Preparing to pull model '$${MODEL}' from $${HOST} ..."
@@ -144,7 +144,7 @@ services:
         # model pull as a fatal stack error and tear down the other services.
     environment:
       OLLAMA_HOST: http://ollama:11434
-      AI_MODEL: ${AI_MODEL:-llava}
+      AI_MODEL: ${AI_MODEL:-moondream2}
     depends_on:
       ollama:
         # Keep deployment resilient: start once Ollama container is up, then do

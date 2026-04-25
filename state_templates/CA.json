@@ -1,0 +1,85 @@
+{
+  "state": "CA",
+  "state_name": "California",
+  "layout_version": "1",
+  "fields": {
+    "title_number": {
+      "regions": [
+        {"left": 0.00, "top": 0.00, "right": 0.40, "bottom": 0.08}
+      ],
+      "label_hints": ["CERTIFICATE NO", "TITLE NO", "DOCUMENT NUMBER"]
+    },
+    "vin": {
+      "regions": [
+        {"left": 0.00, "top": 0.06, "right": 1.00, "bottom": 0.18}
+      ],
+      "label_hints": ["VEHICLE IDENTIFICATION NUMBER", "VIN"]
+    },
+    "vehicle_year": {
+      "regions": [
+        {"left": 0.00, "top": 0.08, "right": 0.22, "bottom": 0.22}
+      ],
+      "label_hints": ["MODEL YEAR", "YEAR"]
+    },
+    "make": {
+      "regions": [
+        {"left": 0.00, "top": 0.14, "right": 0.35, "bottom": 0.26}
+      ],
+      "label_hints": ["MAKE"]
+    },
+    "model": {
+      "regions": [
+        {"left": 0.30, "top": 0.14, "right": 0.65, "bottom": 0.26}
+      ],
+      "label_hints": ["MODEL"]
+    },
+    "body_style": {
+      "regions": [
+        {"left": 0.62, "top": 0.14, "right": 0.82, "bottom": 0.26}
+      ],
+      "label_hints": ["BODY TYPE", "BODY STYLE"]
+    },
+    "color": {
+      "regions": [
+        {"left": 0.80, "top": 0.14, "right": 1.00, "bottom": 0.26}
+      ],
+      "label_hints": ["COLOR"]
+    },
+    "odometer": {
+      "regions": [
+        {"left": 0.00, "top": 0.26, "right": 0.60, "bottom": 0.38}
+      ],
+      "label_hints": ["ODOMETER", "MILEAGE", "ODOMETER READING"]
+    },
+    "owner_name": {
+      "regions": [
+        {"left": 0.00, "top": 0.38, "right": 1.00, "bottom": 0.54}
+      ],
+      "label_hints": ["REGISTERED OWNER", "OWNER"]
+    },
+    "owner_address": {
+      "regions": [
+        {"left": 0.00, "top": 0.48, "right": 1.00, "bottom": 0.62}
+      ],
+      "label_hints": ["ADDRESS", "OWNER ADDRESS"]
+    },
+    "purchase_price": {
+      "regions": [
+        {"left": 0.60, "top": 0.26, "right": 1.00, "bottom": 0.38}
+      ],
+      "label_hints": ["PURCHASE PRICE", "CONSIDERATION"]
+    },
+    "sale_date": {
+      "regions": [
+        {"left": 0.00, "top": 0.60, "right": 0.45, "bottom": 0.70}
+      ],
+      "label_hints": ["DATE OF SALE", "SALE DATE"]
+    },
+    "issue_date": {
+      "regions": [
+        {"left": 0.55, "top": 0.00, "right": 1.00, "bottom": 0.08}
+      ],
+      "label_hints": ["ISSUE DATE", "DATE ISSUED"]
+    }
+  }
+}

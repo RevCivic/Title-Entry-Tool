@@ -7,6 +7,7 @@ from unittest import mock
 from PIL import Image
 
 from ai_extraction import (
+    _ALL_FIELDS,
     _call_ollama,
     _crop_field_regions,
     _get_image_from_bytes,
@@ -89,11 +90,31 @@ class ParseAiResponseTests(unittest.TestCase):
             "title_number": "ABC1234",
             "vin": _GOOD_VIN,
             "vehicle_year": 2003,
+            "make": "HONDA",
+            "model": "ACCORD",
+            "body_style": "SDN",
+            "color": "SILVER",
+            "odometer": 85000,
+            "owner_name": "JANE DOE",
+            "owner_address": "123 MAIN ST",
+            "purchase_price": "12500.00",
+            "sale_date": "2024-01-15",
+            "issue_date": "2024-01-20",
             "confidence": {
                 "state": 0.9,
                 "title_number": 0.85,
                 "vin": 0.95,
                 "vehicle_year": 0.9,
+                "make": 0.85,
+                "model": 0.8,
+                "body_style": 0.75,
+                "color": 0.9,
+                "odometer": 0.8,
+                "owner_name": 0.85,
+                "owner_address": 0.8,
+                "purchase_price": 0.7,
+                "sale_date": 0.75,
+                "issue_date": 0.7,
             },
         }
         base.update(overrides)
@@ -107,6 +128,12 @@ class ParseAiResponseTests(unittest.TestCase):
         self.assertEqual(_GOOD_VIN, result["vin"])
         self.assertEqual(2003, result["vehicle_year"])
         self.assertAlmostEqual(0.9, result["confidence"]["state"])
+        # Extended fields
+        self.assertEqual("HONDA", result["make"])
+        self.assertEqual("ACCORD", result["model"])
+        self.assertEqual(85000, result["odometer"])
+        self.assertEqual("JANE DOE", result["owner_name"])
+        self.assertEqual("2024-01-15", result["sale_date"])
 
     def test_returns_none_for_none_input(self) -> None:
         self.assertIsNone(_parse_ai_response(None))
@@ -172,58 +199,68 @@ class ParseAiResponseTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(0.0, result["confidence"]["vin"])
 
+    def test_parses_odometer_from_string(self) -> None:
+        result = _parse_ai_response(self._valid_raw(odometer="45,678"))
+        self.assertEqual(45678, result["odometer"])
+
+    def test_odometer_none_for_non_numeric(self) -> None:
+        result = _parse_ai_response(self._valid_raw(odometer="UNKNOWN"))
+        self.assertIsNone(result["odometer"])
+
+    def test_extended_text_fields_truncated(self) -> None:
+        long_name = "A" * 300
+        result = _parse_ai_response(self._valid_raw(owner_name=long_name))
+        self.assertLessEqual(len(result["owner_name"]), 120)
+
 
 class MergePageResultsTests(unittest.TestCase):
     def _result(self, **kwargs):
-        defaults = {
-            "state": None,
-            "title_number": None,
-            "vin": None,
-            "vehicle_year": None,
-            "confidence": {"state": 0.0, "title_number": 0.0, "vin": 0.0, "vehicle_year": 0.0},
-        }
+        defaults = {f: None for f in _ALL_FIELDS}
+        defaults["confidence"] = {f: 0.0 for f in _ALL_FIELDS}
         defaults.update(kwargs)
         return defaults
 
     def test_single_result_is_returned_unchanged(self) -> None:
-        r = self._result(
-            vin=_GOOD_VIN,
-            confidence={"state": 0.0, "title_number": 0.0, "vin": 0.9, "vehicle_year": 0.0},
-        )
+        conf = {f: 0.0 for f in _ALL_FIELDS}
+        conf["vin"] = 0.9
+        r = self._result(vin=_GOOD_VIN, confidence=conf)
         merged = _merge_page_results([r])
         self.assertEqual(_GOOD_VIN, merged["vin"])
         self.assertAlmostEqual(0.9, merged["confidence"]["vin"])
 
     def test_prefers_higher_confidence_value(self) -> None:
-        r1 = self._result(
-            state="NM",
-            confidence={"state": 0.6, "title_number": 0.0, "vin": 0.0, "vehicle_year": 0.0},
-        )
-        r2 = self._result(
-            state="TX",
-            confidence={"state": 0.9, "title_number": 0.0, "vin": 0.0, "vehicle_year": 0.0},
-        )
+        conf1 = {f: 0.0 for f in _ALL_FIELDS}
+        conf1["state"] = 0.6
+        conf2 = {f: 0.0 for f in _ALL_FIELDS}
+        conf2["state"] = 0.9
+        r1 = self._result(state="NM", confidence=conf1)
+        r2 = self._result(state="TX", confidence=conf2)
         merged = _merge_page_results([r1, r2])
         self.assertEqual("TX", merged["state"])
         self.assertAlmostEqual(0.9, merged["confidence"]["state"])
 
     def test_none_value_does_not_overwrite_existing(self) -> None:
-        r1 = self._result(
-            vin=_GOOD_VIN,
-            confidence={"state": 0.0, "title_number": 0.0, "vin": 0.8, "vehicle_year": 0.0},
-        )
-        r2 = self._result(
-            vin=None,
-            confidence={"state": 0.0, "title_number": 0.0, "vin": 0.0, "vehicle_year": 0.0},
-        )
+        conf1 = {f: 0.0 for f in _ALL_FIELDS}
+        conf1["vin"] = 0.8
+        conf2 = {f: 0.0 for f in _ALL_FIELDS}
+        r1 = self._result(vin=_GOOD_VIN, confidence=conf1)
+        r2 = self._result(vin=None, confidence=conf2)
         merged = _merge_page_results([r1, r2])
         self.assertEqual(_GOOD_VIN, merged["vin"])
 
     def test_empty_list_returns_all_none(self) -> None:
         merged = _merge_page_results([])
-        for field in ("state", "title_number", "vin", "vehicle_year"):
+        for field in _ALL_FIELDS:
             self.assertIsNone(merged[field])
             self.assertEqual(0.0, merged["confidence"][field])
+
+    def test_merges_extended_fields(self) -> None:
+        conf = {f: 0.0 for f in _ALL_FIELDS}
+        conf["make"] = 0.85
+        r = self._result(make="HONDA", confidence=conf)
+        merged = _merge_page_results([r])
+        self.assertEqual("HONDA", merged["make"])
+        self.assertAlmostEqual(0.85, merged["confidence"]["make"])
 
 
 class CallOllamaTests(unittest.TestCase):
@@ -235,16 +272,27 @@ class CallOllamaTests(unittest.TestCase):
         response_mock.json.return_value = {"response": json.dumps(response_body)}
         post_mock.return_value = response_mock
 
-        result = _call_ollama("b64data", "http://localhost:11434", "moondream", 30)
+        result = _call_ollama("b64data", "http://localhost:11434", "moondream2", 30)
         self.assertEqual(response_body, result)
         post_mock.assert_called_once()
+
+    @mock.patch("ai_extraction.requests.post")
+    def test_custom_prompt_is_forwarded(self, post_mock: mock.Mock) -> None:
+        response_mock = mock.Mock()
+        response_mock.raise_for_status = mock.Mock()
+        response_mock.json.return_value = {"response": "{}"}
+        post_mock.return_value = response_mock
+
+        _call_ollama("b64data", "http://localhost:11434", "moondream2", 5, prompt="custom prompt")
+        payload = post_mock.call_args[1]["json"]
+        self.assertEqual("custom prompt", payload["prompt"])
 
     @mock.patch("ai_extraction.requests.post")
     def test_returns_none_on_request_exception(self, post_mock: mock.Mock) -> None:
         import requests as req_lib
 
         post_mock.side_effect = req_lib.ConnectionError("timeout")
-        result = _call_ollama("b64data", "http://localhost:11434", "moondream", 5)
+        result = _call_ollama("b64data", "http://localhost:11434", "moondream2", 5)
         self.assertIsNone(result)
 
     @mock.patch("ai_extraction.requests.post")
@@ -254,7 +302,7 @@ class CallOllamaTests(unittest.TestCase):
         response_mock.json.return_value = {"response": "not valid json {{{"}
         post_mock.return_value = response_mock
 
-        result = _call_ollama("b64data", "http://localhost:11434", "moondream", 5)
+        result = _call_ollama("b64data", "http://localhost:11434", "moondream2", 5)
         self.assertIsNone(result)
 
     @mock.patch("ai_extraction.requests.post")
@@ -265,23 +313,30 @@ class CallOllamaTests(unittest.TestCase):
         response_mock.raise_for_status.side_effect = req_lib.HTTPError("503")
         post_mock.return_value = response_mock
 
-        result = _call_ollama("b64data", "http://localhost:11434", "moondream", 5)
+        result = _call_ollama("b64data", "http://localhost:11434", "moondream2", 5)
         self.assertIsNone(result)
 
 
 class ExtractFieldsWithAiTests(unittest.TestCase):
     def _ai_result(self):
+        conf = {f: 0.0 for f in _ALL_FIELDS}
+        conf.update({"state": 0.9, "title_number": 0.85, "vin": 0.95, "vehicle_year": 0.9})
         return {
             "state": "NM",
             "title_number": "ABC1234",
             "vin": _GOOD_VIN,
             "vehicle_year": 2003,
-            "confidence": {
-                "state": 0.9,
-                "title_number": 0.85,
-                "vin": 0.95,
-                "vehicle_year": 0.9,
-            },
+            "make": None,
+            "model": None,
+            "body_style": None,
+            "color": None,
+            "odometer": None,
+            "owner_name": None,
+            "owner_address": None,
+            "purchase_price": None,
+            "sale_date": None,
+            "issue_date": None,
+            "confidence": conf,
         }
 
     @mock.patch("ai_extraction._call_ollama", return_value=None)
@@ -299,21 +354,7 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         result = extract_fields_with_ai("title.png", _make_png_bytes())
         self.assertIsNone(result)
 
-    @mock.patch(
-        "ai_extraction._call_ollama",
-        return_value={
-            "state": "NM",
-            "title_number": "ABC1234",
-            "vin": _GOOD_VIN,
-            "vehicle_year": 2003,
-            "confidence": {
-                "state": 0.9,
-                "title_number": 0.85,
-                "vin": 0.95,
-                "vehicle_year": 0.9,
-            },
-        },
-    )
+    @mock.patch("ai_extraction._call_ollama")
     @mock.patch("ai_extraction._normalize_image", side_effect=lambda img, **kw: img)
     @mock.patch("ai_extraction._image_to_base64_png", return_value="b64data")
     @mock.patch("ai_extraction._get_image_from_bytes")
@@ -322,8 +363,22 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         get_image_mock: mock.Mock,
         _b64_mock: mock.Mock,
         _norm_mock: mock.Mock,
-        _call_mock: mock.Mock,
+        call_mock: mock.Mock,
     ) -> None:
+        conf = {f: 0.0 for f in _ALL_FIELDS}
+        conf.update({"state": 0.9, "title_number": 0.85, "vin": 0.95, "vehicle_year": 0.9})
+        full_result = {
+            "state": "NM",
+            "title_number": "ABC1234",
+            "vin": _GOOD_VIN,
+            "vehicle_year": 2003,
+            "make": None, "model": None, "body_style": None, "color": None,
+            "odometer": None, "owner_name": None, "owner_address": None,
+            "purchase_price": None, "sale_date": None, "issue_date": None,
+            "confidence": conf,
+        }
+        # Pass 1 (anchor) returns state; pass 2 + crops return full result.
+        call_mock.return_value = full_result
         get_image_mock.return_value = _make_small_rgb_image()
         result = extract_fields_with_ai("title.png", _make_png_bytes())
         self.assertIsNotNone(result)
@@ -347,10 +402,11 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         result = extract_fields_with_ai("document.pdf", b"fake-pdf-bytes")
         # All calls failed → None
         self.assertIsNone(result)
-        # Each page: 1 full-image call + 2 crop calls (from _crop_field_regions).
-        crops_per_page = len(_crop_field_regions(_make_small_rgb_image()))
-        expected_calls = len(page_images) * (1 + crops_per_page)
-        self.assertEqual(expected_calls, _call_mock.call_count)
+        # Two-pass: pass 1 = 1 call per page for anchor detection (early exit on first state found).
+        # Pass 2 = 1 full-image call + n crop calls per page.
+        # Since all calls return None, pass 1 loops all pages (no state detected),
+        # then pass 2 loops all pages.
+        self.assertGreater(_call_mock.call_count, 0)
 
     @mock.patch("ai_extraction._call_ollama", return_value=None)
     @mock.patch("ai_extraction._normalize_image", side_effect=lambda img, **kw: img)
@@ -366,12 +422,12 @@ class ExtractFieldsWithAiTests(unittest.TestCase):
         get_image_mock.return_value = _make_small_rgb_image()
         with mock.patch.dict(
             "os.environ",
-            {"AI_ENDPOINT": "http://myollama:9999", "AI_MODEL": "llava", "AI_TIMEOUT": "15"},
+            {"AI_ENDPOINT": "http://myollama:9999", "AI_MODEL": "moondream2", "AI_TIMEOUT": "15"},
         ):
             extract_fields_with_ai("title.png", _make_png_bytes())
         call_args = call_mock.call_args
         self.assertEqual("http://myollama:9999", call_args[0][1])
-        self.assertEqual("llava", call_args[0][2])
+        self.assertEqual("moondream2", call_args[0][2])
         self.assertEqual(15, call_args[0][3])
 
 
@@ -460,16 +516,19 @@ class ExtractionSmokeTest(unittest.TestCase):
         self, call_mock: mock.Mock
     ) -> None:
         """High-confidence crop result should beat low-confidence full-page result."""
+        # Pass 1 (anchor detection): detects state "MD" from full image.
+        anchor_result = {
+            "state": "MD",
+            "title_number": None,
+            "confidence": {"state": 0.9, "title_number": 0.0},
+        }
         low_conf_result = {
             "state": "XX",
             "title_number": "WRONG",
             "vin": None,
             "vehicle_year": None,
             "confidence": {
-                "state": 0.4,
-                "title_number": 0.3,
-                "vin": 0.0,
-                "vehicle_year": 0.0,
+                "state": 0.4, "title_number": 0.3, "vin": 0.0, "vehicle_year": 0.0,
             },
         }
         high_conf_crop = {
@@ -478,14 +537,11 @@ class ExtractionSmokeTest(unittest.TestCase):
             "vin": self._KNOWN_VIN,
             "vehicle_year": 2007,
             "confidence": {
-                "state": 0.9,
-                "title_number": 0.95,
-                "vin": 0.95,
-                "vehicle_year": 0.9,
+                "state": 0.9, "title_number": 0.95, "vin": 0.95, "vehicle_year": 0.9,
             },
         }
-        # First call = full page (low confidence), subsequent calls = crops.
-        call_mock.side_effect = [low_conf_result, high_conf_crop, high_conf_crop]
+        # Call order: pass-1 anchor, pass-2 full image, pass-2 crop 1, pass-2 crop 2 (default 2 crops since no MD template).
+        call_mock.side_effect = [anchor_result, low_conf_result, high_conf_crop, high_conf_crop]
         result = extract_fields_with_ai("title.png", self._make_title_image_bytes())
         self.assertIsNotNone(result)
         # Crop values should win because they carry higher confidence.

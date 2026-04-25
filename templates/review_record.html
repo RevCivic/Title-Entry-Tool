@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Review Record #{{ record.id }}</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
+  h1 { color: #003366; }
+  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; }
+  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
+               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+          padding: 1.25rem; }
+  .card h2 { margin-top: 0; font-size: 1rem; color: #003366; border-bottom: 2px solid #e2e8f0;
+             padding-bottom: 0.5rem; }
+  label { display: block; font-size: 0.8rem; color: #555; margin-top: 0.75rem; }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc;
+    border-radius: 4px; font-size: 0.9rem; box-sizing: border-box; margin-top: 0.2rem;
+  }
+  .original { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
+  .low-conf { border-color: #f59e0b !important; background: #fffbeb; }
+  .btn-row { margin-top: 1.25rem; display: flex; gap: 0.75rem; }
+  .btn { padding: 0.5rem 1.1rem; border: none; border-radius: 4px; cursor: pointer;
+         font-size: 0.9rem; font-weight: bold; }
+  .btn-save { background: #003366; color: white; }
+  .btn-save:hover { background: #00509e; }
+  .btn-approve { background: #15803d; color: white; }
+  .btn-approve:hover { background: #166534; }
+  .corrections-list { font-size: 0.82rem; }
+  .corrections-list .item { padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; }
+  .image-preview img { max-width: 100%; border-radius: 6px; border: 1px solid #e2e8f0; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px;
+           font-size: 0.75rem; font-weight: bold; }
+  .badge-ok { background: #d1fae5; color: #065f46; }
+  .badge-err { background: #fee2e2; color: #991b1b; }
+  #save-status { margin-top: 0.75rem; font-size: 0.85rem; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>✏ Review Record #{{ record.id }}</h1>
+
+<div class="toolbar">
+  <a href="/review">⬅ Back to List</a>
+  <a href="/api/generate-pdf/{{ record.id }}">⬇ Download PDF</a>
+  <a href="/titles/{{ record.id }}/back">🔄 Back of Title</a>
+</div>
+
+<div class="layout">
+
+  <!-- Left: field correction form -->
+  <div class="card">
+    <h2>Field Corrections
+      {% if record.is_validated %}
+        <span class="badge badge-ok">Validated</span>
+      {% else %}
+        <span class="badge badge-err">Has Errors</span>
+      {% endif %}
+    </h2>
+
+    <form id="correction-form">
+      {% set field_labels = {
+        'state': 'State',
+        'title_number': 'Title Number',
+        'vin': 'VIN',
+        'vehicle_year': 'Vehicle Year',
+        'make': 'Make',
+        'model': 'Model',
+        'body_style': 'Body Style',
+        'color': 'Color',
+        'odometer': 'Odometer (miles)',
+        'owner_name': 'Owner Name',
+        'owner_address': 'Owner Address',
+        'purchase_price': 'Purchase Price',
+        'sale_date': 'Date of Sale (YYYY-MM-DD)',
+        'issue_date': 'Issue Date (YYYY-MM-DD)'
+      } %}
+
+      {% for field in field_names %}
+      <label>{{ field_labels.get(field, field) }}
+        <input type="text" name="field_{{ field }}"
+               placeholder="{{ record.get(field, '') or '' }}"
+               value="">
+        <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
+      </label>
+      {% endfor %}
+
+      <input type="hidden" name="approve" id="approve-flag" value="">
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-save" onclick="saveCorrections(false)">💾 Save Corrections</button>
+        <button type="button" class="btn btn-approve" onclick="saveCorrections(true)">✅ Approve as Ground Truth</button>
+      </div>
+      <div id="save-status"></div>
+    </form>
+  </div>
+
+  <!-- Right: image preview + correction history -->
+  <div>
+    {% if record.source_file_path %}
+    <div class="card" style="margin-bottom:1.5rem;">
+      <h2>Source Document</h2>
+      <div class="image-preview">
+        {% set fname = record.source_file_path.split('/')[-1] %}
+        {% if fname.endswith('.pdf') %}
+          <p style="font-size:0.85rem;color:#666;">PDF document — <a href="/uploads/{{ fname }}" target="_blank">Open PDF</a></p>
+        {% else %}
+          <img src="/uploads/{{ fname }}" alt="Title document">
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2>Correction History</h2>
+      {% if corrections %}
+      <div class="corrections-list">
+        {% for c in corrections %}
+        <div class="item">
+          <strong>{{ c.field_name }}</strong>:
+          <span style="color:#888;">{{ c.original_value or '—' }}</span>
+          → <span style="color:#15803d;">{{ c.corrected_value or '—' }}</span>
+          {% if c.is_ground_truth %}
+            <span class="badge badge-ok" style="margin-left:.4rem;">GT</span>
+          {% endif %}
+          <div style="font-size:0.75rem;color:#aaa;">{{ c.created_at[:19] if c.created_at else '' }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p style="color:#999;font-size:0.85rem;">No corrections yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+async function saveCorrections(approve) {
+  const form = document.getElementById('correction-form');
+  document.getElementById('approve-flag').value = approve ? '1' : '';
+  const data = new FormData(form);
+
+  const resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
+  const json = await resp.json();
+  const el = document.getElementById('save-status');
+  if (resp.ok) {
+    el.style.color = '#15803d';
+    el.textContent = `✔ ${json.saved} correction(s) saved${approve ? ' as ground truth' : ''}.`;
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    el.style.color = '#991b1b';
+    el.textContent = 'Error saving corrections.';
+  }
+}
+</script>
+</body>
+</html>
