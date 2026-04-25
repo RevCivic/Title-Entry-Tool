@@ -447,7 +447,7 @@ def _detect_file_extension(file_bytes: bytes) -> str:
     return "bin"
 
 
-def _save_upload(file_bytes: bytes, original_filename: str) -> Optional[str]:  # noqa: ARG001
+def _save_upload(file_bytes: bytes, _original_filename: str) -> Optional[str]:
     """Persist an uploaded file to the uploads directory.
 
     The saved filename is a random UUID with an extension derived from the
