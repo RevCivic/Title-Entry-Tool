@@ -1,0 +1,85 @@
+{
+  "state": "CO",
+  "state_name": "Colorado",
+  "layout_version": "1",
+  "fields": {
+    "title_number": {
+      "regions": [
+        {"left": 0.62, "top": 0.00, "right": 1.00, "bottom": 0.08}
+      ],
+      "label_hints": ["TITLE NO", "TITLE NUMBER"]
+    },
+    "vin": {
+      "regions": [
+        {"left": 0.00, "top": 0.05, "right": 1.00, "bottom": 0.18}
+      ],
+      "label_hints": ["VEHICLE IDENTIFICATION NUMBER", "VIN"]
+    },
+    "vehicle_year": {
+      "regions": [
+        {"left": 0.00, "top": 0.08, "right": 0.22, "bottom": 0.22}
+      ],
+      "label_hints": ["YEAR", "MODEL YEAR"]
+    },
+    "make": {
+      "regions": [
+        {"left": 0.00, "top": 0.14, "right": 0.32, "bottom": 0.26}
+      ],
+      "label_hints": ["MAKE"]
+    },
+    "model": {
+      "regions": [
+        {"left": 0.30, "top": 0.14, "right": 0.62, "bottom": 0.26}
+      ],
+      "label_hints": ["MODEL"]
+    },
+    "body_style": {
+      "regions": [
+        {"left": 0.60, "top": 0.14, "right": 0.80, "bottom": 0.26}
+      ],
+      "label_hints": ["BODY STYLE"]
+    },
+    "color": {
+      "regions": [
+        {"left": 0.78, "top": 0.14, "right": 1.00, "bottom": 0.26}
+      ],
+      "label_hints": ["COLOR"]
+    },
+    "odometer": {
+      "regions": [
+        {"left": 0.00, "top": 0.24, "right": 0.50, "bottom": 0.36}
+      ],
+      "label_hints": ["ODOMETER", "ODOMETER READING"]
+    },
+    "owner_name": {
+      "regions": [
+        {"left": 0.00, "top": 0.36, "right": 1.00, "bottom": 0.50}
+      ],
+      "label_hints": ["OWNER", "REGISTERED OWNER"]
+    },
+    "owner_address": {
+      "regions": [
+        {"left": 0.00, "top": 0.45, "right": 1.00, "bottom": 0.58}
+      ],
+      "label_hints": ["ADDRESS"]
+    },
+    "purchase_price": {
+      "regions": [
+        {"left": 0.50, "top": 0.24, "right": 1.00, "bottom": 0.36}
+      ],
+      "label_hints": ["PURCHASE PRICE"]
+    },
+    "sale_date": {
+      "regions": [
+        {"left": 0.00, "top": 0.56, "right": 0.45, "bottom": 0.66}
+      ],
+      "label_hints": ["DATE OF SALE", "SALE DATE"]
+    },
+    "issue_date": {
+      "regions": [
+        {"left": 0.00, "top": 0.00, "right": 0.50, "bottom": 0.08}
+      ],
+      "label_hints": ["ISSUE DATE", "DATE ISSUED"]
+    }
+  }
+}

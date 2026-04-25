@@ -1,42 +1,56 @@
 # Title-Entry-Tool
-A tool to expediate title entry for the NMVITIS upload system.
+A tool to expedite title entry for the NMVITIS upload system.
 
 ## Current workflow
 
-- Record OCR-derived title data from multiple states into PostgreSQL.
+- Upload PDF/image files; barcode scanning, image preprocessing (deskew, Otsu binarization, perspective correction), and AI extraction pull **all NMVITIS-required fields** automatically.
+- State-specific layout templates (`state_templates/`) guide targeted crops for NM, TX, CA, AZ, CO (extend by adding a JSON file).
+- Two-pass AI extraction: pass 1 anchors the state and title number; pass 2 uses a state-aware prompt plus template-guided crops.
 - Validate title number, VIN (including check digit), and vehicle year during insert.
-- Flag invalid rows with stored validation errors for correction.
-- Export only validated records to CSV for NMVITIS upload.
+- Export validated records to a full NMVITIS-aligned CSV (all required columns).
+- Review and correct extracted fields in a web UI (`/review`); approve records as ground truth.
+- Generate per-record NMVITIS PDF submission forms (`/api/generate-pdf/<id>`).
+- Import NMVITIS rejection CSVs back as flagged corrections (`/import-rejections`).
+- Export ground-truth corrections as training data (`python train_ocr.py export`).
 
 ## Quick usage
 
 ```python
-from title_entry_tool import create_connection_from_env, initialize_database, insert_title_record, export_validated_to_csv
+from title_entry_tool import (
+    create_connection_from_env, initialize_database,
+    insert_title_record, export_validated_to_csv
+)
 
 connection = create_connection_from_env()
 initialize_database(connection)
 
-insert_title_record(connection, "NM", "ABC-1234", "1HGCM82633A004352", 2003, ocr_text="OCR text")
+insert_title_record(
+    connection, state="NM", title_number="ABC-1234",
+    vin="1HGCM82633A004352", vehicle_year=2003,
+    make="HONDA", model="ACCORD", color="SILVER", odometer=45000,
+    owner_name="JANE DOE", owner_address="123 MAIN ST",
+)
 export_validated_to_csv(connection, "nmvitis_upload.csv")
 ```
 
 ### Environment variables
 
-| Variable                  | Default                      | Description                                               |
-|---------------------------|------------------------------|-----------------------------------------------------------|
-| `COMPOSE_PROFILES`        | *(empty)*                    | Set to `ai` to start Ollama AI services with the stack    |
-| `PORT`                    | `8000`                       | Port the Flask app listens on                             |
-| `DEFAULT_STATE`           | `NM`                         | Fallback state when OCR finds none                        |
-| `DB_HOST`                 | `localhost`                  | PostgreSQL hostname                                       |
-| `DB_PORT`                 | `5432`                       | PostgreSQL port                                           |
-| `DB_NAME`                 | `titles`                     | PostgreSQL database name                                  |
-| `DB_USER`                 | `postgres`                   | PostgreSQL user                                           |
-| `DB_PASSWORD`             | *(empty)*                    | PostgreSQL password                                       |
-| `EXTRACTION_PROVIDER`     | `hybrid`                     | `tesseract`, `ai`, or `hybrid`                            |
-| `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                |
-| `AI_MODEL`                | `llava`                      | Ollama model name (e.g. `llava`, `llava:13b`)             |
-| `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call        |
-| `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review       |
+| Variable                  | Default                      | Description                                                   |
+|---------------------------|------------------------------|---------------------------------------------------------------|
+| `COMPOSE_PROFILES`        | *(empty)*                    | Set to `ai` to start Ollama AI services with the stack        |
+| `PORT`                    | `8000`                       | Port the Flask app listens on                                 |
+| `DEFAULT_STATE`           | `NM`                         | Fallback state when OCR finds none                            |
+| `DATA_DIR`                | `/app/data`                  | Root directory for uploads, PDFs, and training data volumes   |
+| `DB_HOST`                 | `localhost`                  | PostgreSQL hostname                                           |
+| `DB_PORT`                 | `5432`                       | PostgreSQL port                                               |
+| `DB_NAME`                 | `titles`                     | PostgreSQL database name                                      |
+| `DB_USER`                 | `postgres`                   | PostgreSQL user                                               |
+| `DB_PASSWORD`             | *(empty)*                    | PostgreSQL password                                           |
+| `EXTRACTION_PROVIDER`     | `hybrid`                     | `tesseract`, `ai`, or `hybrid`                                |
+| `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                    |
+| `AI_MODEL`                | `moondream2`                 | Ollama model name (`moondream2` recommended for documents)    |
+| `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call            |
+| `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review           |
 
 Copy `.env.example` to `.env` and edit values before running.
 
@@ -45,13 +59,15 @@ Copy `.env.example` to `.env` and edit values before running.
 This repository includes a Flask web app (`web_app.py`) that can:
 
 - Upload PDF or image files (`pdf`, `png`, `jpg`, `jpeg`, `tif`, `tiff`, `bmp`, `webp`)
+- Scan barcodes (PDF417, QR, DataMatrix) for high-confidence VIN/title-number anchors
+- Preprocess images (deskew, Otsu binarization, document-border detection)
 - Extract text from:
   - PDFs (native text; OCR fallback for image-only pages)
-  - Images (OCR via Tesseract)
-- Parse title fields (`state`, `title_number`, `vin`, `vehicle_year`) using Tesseract
-  regex matching **and/or** a self-hosted AI vision model
+  - Images (OCR via Tesseract with preprocessing)
+- Extract all NMVITIS required fields using a two-pass AI strategy plus Tesseract fallback
 - Display per-field confidence scores and flag low-confidence results for review
-- Validate and store records in PostgreSQL using the existing validation logic
+- Validate and store records in PostgreSQL
+- Serve a review/correction UI, back-of-title form, and downloadable PDF
 
 ### Extraction providers
 
@@ -114,11 +130,11 @@ Then start the stack the same way regardless of mode:
 docker compose up --build
 ```
 
-> **Disk space:** allocate at least 5 GB for the `ollama_data` volume
-> (`llava` is ~4 GB; a larger variant such as `llava:13b` requires ~8 GB).
+> **Disk space:** allocate at least 2 GB for the `ollama_data` volume
+> (`moondream2` is ~1.8 GB; alternative `qwen2.5vl:3b` requires ~2.5 GB).
 
 > **First AI run:** the `ollama-init` service downloads the configured model
-> (~1.5–4 GB) before AI extraction becomes active.  The app continues accepting
+> before AI extraction becomes active.  The app continues accepting
 > uploads with OCR while the download completes.
 >
 > If AI setup does not complete, review both startup and model-pull logs:
@@ -127,15 +143,9 @@ docker compose up --build
 > docker compose logs ollama
 > docker compose logs ollama-init
 > ```
->
-> The `ollama-init` container now waits for the Ollama API and emits explicit
-> diagnostics before retrying model pulls, so failed AI bootstraps leave
-> actionable logs without taking down the core app/database services.
 
 > **Image version:** set `OLLAMA_VERSION` in your `.env` (or stack environment)
-> to pin a specific release tag, e.g. `OLLAMA_VERSION=0.21.1`.  Both the
-> `ollama` and `ollama-init` services share this variable, so one change
-> updates both.  Leave it unset (or `latest`) to always pull the newest image.
+> to pin a specific release tag, e.g. `OLLAMA_VERSION=0.21.1`.
 
 #### CLI alternative
 
@@ -149,42 +159,83 @@ docker compose --profile ai up --build
 #### Optional GPU for AI service
 
 If you have an NVIDIA GPU and the NVIDIA Container Toolkit installed, layer in
-the GPU override file.  `COMPOSE_PROFILES=ai` (or `--profile ai`) is still
-required to start Ollama:
+the GPU override file:
 
 ```bash
-# env-var approach (recommended for Portainer)
 COMPOSE_PROFILES=ai docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-
-# CLI approach
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile ai up --build
 ```
 
 Data is persisted in the `postgres_data` and `ollama_data` named volumes.
-Application artifacts (e.g. exported CSVs) are stored in the `app_data` named
-volume mounted at `/app/data`.
+Application artifacts (uploads, exported CSVs, generated PDFs) are stored in
+the `app_data` named volume mounted at `/app/data`.
 
-### Health, status, and maintenance endpoints
+### All endpoints
 
-| Endpoint                              | Method | Description                                                                         |
-|---------------------------------------|--------|-------------------------------------------------------------------------------------|
-| `GET /health`                         | GET    | Returns `{"status": "ok"}` when the Flask app is running.                          |
-| `GET /api/status`                     | GET    | Returns extraction provider and AI readiness (`ready` \| `loading` \| `unavailable` \| `not_configured`). |
-| `GET /api/maintenance/containers`     | GET    | Returns state/health of all compose services (requires Docker socket mount).       |
-| `GET /api/maintenance/logs/<service>` | GET    | Returns recent log lines for a service plus container metadata and detailed retrieval errors (`?lines=N`, default 100, max 500). |
-| `POST /api/maintenance/ai/start`      | POST   | Starts stopped `ollama` and `ollama-init` containers (requires Docker socket mount). |
+| Endpoint                              | Method       | Description                                                                              |
+|---------------------------------------|--------------|------------------------------------------------------------------------------------------|
+| `GET /`                               | GET          | Upload form                                                                               |
+| `POST /`                              | POST         | Upload title image/PDF; extract all fields; save record                                   |
+| `GET /review`                         | GET          | List all title records for review/correction; date-filtered CSV export control            |
+| `GET /review/<id>`                    | GET          | Show a single record side-by-side with its source image                                   |
+| `POST /review/<id>`                   | POST         | Submit field corrections; optional ground-truth approval                                   |
+| `GET /titles/<id>/back`               | GET          | Show the back-of-title form for a record                                                   |
+| `POST /titles/<id>/back`              | POST         | Save back-of-title data (odometer, buyer, seller)                                          |
+| `GET /export`                         | GET          | Download NMVITIS-aligned CSV (`?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD`)                |
+| `GET /import-rejections`              | GET          | NMVITIS rejection import form                                                              |
+| `POST /import-rejections`             | POST         | Upload a NMVITIS rejection CSV; flags affected records for correction                      |
+| `GET /api/generate-pdf/<id>`          | GET          | Generate and download the NMVITIS submission PDF for a record                              |
+| `GET /uploads/<filename>`             | GET          | Serve a saved upload for display in the review UI                                          |
+| `GET /api/training-data`              | GET          | Return ground-truth corrections as JSON for training pipeline use                          |
+| `GET /health`                         | GET          | Returns `{"status": "ok"}` when the Flask app is running                                  |
+| `GET /api/status`                     | GET          | Returns extraction provider and AI readiness                                               |
+| `GET /api/maintenance/containers`     | GET          | Returns state/health of all compose services (requires Docker socket mount)                |
+| `GET /api/maintenance/logs/<service>` | GET          | Returns recent log lines for a service                                                     |
+| `POST /api/maintenance/ai/start`      | POST         | Starts stopped `ollama` and `ollama-init` containers                                       |
 
-> **AI status values:**
-> - `ready` – Ollama API is reachable and the configured model is available.
-> - `loading` – Ollama is running but the model download is still in progress.
-> - `unavailable` – Ollama did not respond (services not started).
-> - `not_configured` – `EXTRACTION_PROVIDER=tesseract`; AI is intentionally disabled.
+### State layout templates
 
-The container healthcheck polls `/health` so orchestrators (Docker Compose,
-Kubernetes, etc.) can detect real application readiness.
+Templates in `state_templates/` define per-field bounding-box regions as
+fractions of document width/height.  Included states: **NM, TX, CA, AZ, CO**.
+
+Add a new state by creating `state_templates/<STATE>.json`:
+
+```json
+{
+  "state": "FL",
+  "version": "1.0",
+  "fields": {
+    "vin": {
+      "label_hints": ["VEHICLE IDENTIFICATION NUMBER"],
+      "regions": [
+        { "left": 0.0, "top": 0.08, "right": 1.0, "bottom": 0.20 }
+      ]
+    }
+  }
+}
+```
+
+### Training data export (Phase 2)
+
+After operators approve corrections in the `/review` UI, export ground-truth
+data for AI fine-tuning:
+
+```bash
+# Show statistics
+python train_ocr.py stats
+
+# Export all approved corrections as image/label pairs
+python train_ocr.py export --output training_data/
+
+# Export only specific fields
+python train_ocr.py export --fields vin,make --output training_data/
+```
+
+The exported `manifest.json` is compatible with LLaVA-style LoRA fine-tuning
+and Tesseract `.box`/`.tif` training pipelines.
 
 ### Run tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
+

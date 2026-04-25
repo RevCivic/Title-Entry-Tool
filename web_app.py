@@ -1,20 +1,37 @@
+import hashlib
 import io
 import os
 import re
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import fitz
 import pytesseract
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from PIL import Image, ImageFilter, ImageOps
 
-from ai_extraction import extract_fields_with_ai
+from ai_extraction import (
+    _ALL_FIELDS as AI_ALL_FIELDS,
+    _CORE_FIELDS as AI_CORE_FIELDS,
+    extract_fields_with_ai,
+)
+from barcode_scanner import scan_barcodes
+from image_preprocessing import binarize_image, preprocess_title_image
 from title_entry_tool import (
     create_connection_from_env,
+    get_corrections_for_record,
+    get_record_by_id,
+    get_title_back_record,
+    import_nmvitis_rejections,
     initialize_database,
+    insert_correction,
+    insert_title_back_record,
     insert_title_record,
+    list_ground_truth_corrections,
+    list_records,
+    export_validated_to_csv_by_date,
 )
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}
@@ -23,12 +40,20 @@ MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MISSING_YEAR_SENTINEL = 0
 DEFAULT_PORT = 8000
 
+# Directory for persisted uploads and generated PDFs.
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
+PDFS_DIR = os.path.join(DATA_DIR, "pdfs")
+
 # Extraction provider: "tesseract" | "ai" | "hybrid" (default)
 EXTRACTION_PROVIDER = os.getenv("EXTRACTION_PROVIDER", "hybrid").lower().strip()
 try:
     AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.6"))
 except ValueError:
     AI_CONFIDENCE_THRESHOLD = 0.6
+
+# All field names recognised by the extraction pipeline (core + extended).
+_FIELD_NAMES: Tuple[str, ...] = AI_ALL_FIELDS
 
 # AI readiness cache – avoids a network probe on every page load.
 _AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
@@ -221,8 +246,6 @@ def _check_ai_status() -> str:
 
 # ── Text / field extraction ───────────────────────────────────────────────────
 
-_FIELD_NAMES: Tuple[str, ...] = ("state", "title_number", "vin", "vehicle_year")
-
 VIN_PATTERN = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b")
 YEAR_PATTERN = re.compile(r"\b(18[8-9]\d|19\d{2}|20\d{2}|21\d{2})\b")
 TITLE_PATTERN = re.compile(
@@ -298,6 +321,12 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
                 continue
             pixmap = page.get_pixmap(dpi=300)
             image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+            # Apply preprocessing before OCR.
+            try:
+                image = preprocess_title_image(image)
+            except Exception:
+                pass
+            image = binarize_image(image)
             chunks.append(pytesseract.image_to_string(image))
     finally:
         document.close()
@@ -307,6 +336,13 @@ def _extract_text_from_pdf(file_bytes: bytes) -> str:
 def _extract_text_from_image(file_bytes: bytes) -> str:
     image = Image.open(io.BytesIO(file_bytes))
     image = ImageOps.exif_transpose(image)
+
+    # Full pre-processing pipeline (deskew, border crop, perspective correction).
+    try:
+        image = preprocess_title_image(image)
+    except Exception:
+        pass
+
     # Upscale to ensure the long side is at least 2000 px for OCR accuracy.
     width, height = image.size
     if max(width, height) < 2000:
@@ -315,10 +351,13 @@ def _extract_text_from_image(file_bytes: bytes) -> str:
             (int(width * scale), int(height * scale)),
             Image.LANCZOS,
         )
-    # Convert to grayscale for Tesseract (handles any input mode).
-    image = image.convert("L")
-    image = image.filter(ImageFilter.SHARPEN)
-    image = ImageOps.autocontrast(image)
+    # Binarize for Tesseract.
+    try:
+        image = binarize_image(image)
+    except Exception:
+        image = image.convert("L")
+        image = image.filter(ImageFilter.SHARPEN)
+        image = ImageOps.autocontrast(image)
     return pytesseract.image_to_string(image, config="--psm 6").strip()
 
 
@@ -335,9 +374,17 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
 def _tesseract_fields_and_confidence(
     text: str,
 ) -> Tuple[Dict[str, Any], Dict[str, float]]:
-    """Run regex parsing on OCR text and assign a nominal confidence."""
-    fields = parse_extracted_fields(text) if text else {f: None for f in _FIELD_NAMES}
-    confidence = {f: (0.7 if fields.get(f) is not None else 0.0) for f in _FIELD_NAMES}
+    """Run regex parsing on OCR text and assign a nominal confidence.
+
+    Only the core fields are parseable from raw OCR text; extended fields
+    (make, model, etc.) are left as None with 0.0 confidence.
+    """
+    core_fields = parse_extracted_fields(text) if text else {f: None for f in AI_CORE_FIELDS}
+    fields: Dict[str, Any] = {f: None for f in _FIELD_NAMES}
+    fields.update(core_fields)
+    confidence = {
+        f: (0.7 if fields.get(f) is not None else 0.0) for f in _FIELD_NAMES
+    }
     return fields, confidence
 
 
@@ -381,6 +428,27 @@ def _apply_word_confidence(
                 confidence[field] = word_conf[key]
 
 
+def _save_upload(file_bytes: bytes, original_filename: str) -> Optional[str]:
+    """Persist an uploaded file to the uploads directory.
+
+    Returns the saved file path, or None on failure.
+    """
+    try:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
+        unique_name = f"{uuid.uuid4().hex}.{ext}"
+        path = os.path.join(UPLOADS_DIR, unique_name)
+        with open(path, "wb") as f:
+            f.write(file_bytes)
+        return path
+    except Exception:
+        return None
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def _run_extraction(
     filename: str,
     file_bytes: bytes,
@@ -389,10 +457,13 @@ def _run_extraction(
 ) -> Optional[Dict[str, Any]]:
     """Run extraction using the configured provider.
 
+    Barcode scanning always runs first; a successful decode provides
+    1.0-confidence anchor values that are merged into the final result.
+
     Returns a dict with:
-        fields          – {state, title_number, vin, vehicle_year}
+        fields          – all title fields (core + extended), None when absent
         raw_text        – OCR/extracted text for database storage
-        source          – "ai" | "tesseract" | "hybrid" | "hybrid-fallback"
+        source          – "barcode" | "ai" | "tesseract" | "hybrid"
         confidence      – per-field float confidence dict
         low_confidence  – list of field names below *threshold*
 
@@ -406,6 +477,13 @@ def _run_extraction(
         if raw_text is None:
             raw_text = extract_text_from_upload(filename, file_bytes)
         return raw_text
+
+    # ── Barcode scan (highest confidence – runs regardless of provider) ───────
+    barcode_result: Optional[Dict[str, Any]] = None
+    try:
+        barcode_result = scan_barcodes(filename, file_bytes)
+    except Exception:
+        barcode_result = None
 
     if provider in ("ai", "hybrid"):
         try:
@@ -445,7 +523,7 @@ def _run_extraction(
             ai_conf_map = ai_result.get("confidence", {})
             needs_tesseract = any(
                 ai_result.get(field) is None or ai_conf_map.get(field, 0.0) < threshold
-                for field in _FIELD_NAMES
+                for field in AI_CORE_FIELDS  # Only core fields can be found by Tesseract.
             )
             if needs_tesseract:
                 raw_text_value = _get_raw_text()
@@ -472,15 +550,28 @@ def _run_extraction(
                     confidence[field] = ai_conf
                     ai_used = True
                 else:
-                    fields[field] = tesseract_fields.get(field)
+                    tess_val = tesseract_fields.get(field)
+                    fields[field] = tess_val
                     confidence[field] = tesseract_conf.get(field, 0.0)
-                    tess_used = True
+                    # Only mark tesseract as used when it actually produced a value.
+                    if tess_val is not None:
+                        tess_used = True
             if ai_used and tess_used:
                 source = "hybrid"
             elif ai_used:
                 source = "ai"
             else:
                 source = "tesseract"
+
+    # ── Merge barcode anchors (always override with 1.0-confidence values) ───
+    if barcode_result:
+        bc_conf = barcode_result.get("confidence", {})
+        for field in _FIELD_NAMES:
+            bc_val = barcode_result.get(field)
+            if bc_val is not None:
+                fields[field] = bc_val
+                confidence[field] = bc_conf.get(field, 1.0)
+        source = "barcode" if source == "tesseract" and barcode_result else source
 
     raw_text_out = raw_text or ""
 
@@ -561,6 +652,10 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             vehicle_year = fields.get("vehicle_year") or MISSING_YEAR_SENTINEL
             extracted_text = extraction["raw_text"]
 
+            # Save the uploaded file for the review workflow.
+            source_file_path = _save_upload(file_bytes, upload.filename or "upload")
+            image_hash = _sha256(file_bytes)
+
             connection = create_connection_from_env()
             try:
                 initialize_database(connection)
@@ -571,6 +666,17 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                     vin=vin,
                     vehicle_year=vehicle_year,
                     ocr_text=extracted_text,
+                    make=fields.get("make"),
+                    model=fields.get("model"),
+                    body_style=fields.get("body_style"),
+                    color=fields.get("color"),
+                    odometer=fields.get("odometer"),
+                    owner_name=fields.get("owner_name"),
+                    owner_address=fields.get("owner_address"),
+                    purchase_price=fields.get("purchase_price"),
+                    sale_date=fields.get("sale_date"),
+                    issue_date=fields.get("issue_date"),
+                    source_file_path=source_file_path,
                 )
             finally:
                 connection.close()
@@ -580,6 +686,16 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 "title_number": title_number,
                 "vin": vin,
                 "vehicle_year": vehicle_year,
+                "make": fields.get("make"),
+                "model": fields.get("model"),
+                "body_style": fields.get("body_style"),
+                "color": fields.get("color"),
+                "odometer": fields.get("odometer"),
+                "owner_name": fields.get("owner_name"),
+                "owner_address": fields.get("owner_address"),
+                "purchase_price": fields.get("purchase_price"),
+                "sale_date": fields.get("sale_date"),
+                "issue_date": fields.get("issue_date"),
             }
             context["record"] = record
             context["extraction_info"] = {
@@ -593,6 +709,225 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 context["error"] = "Record saved with validation errors."
 
         return render_template("index.html", **context)
+
+    # ── Review / annotation endpoints ─────────────────────────────────────────
+
+    @app.route("/review")
+    def review_list():
+        """List all title records for review."""
+        try:
+            limit = max(1, min(200, int(request.args.get("limit", "50"))))
+            offset = max(0, int(request.args.get("offset", "0")))
+        except (TypeError, ValueError):
+            limit, offset = 50, 0
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            records = list_records(connection, limit=limit, offset=offset)
+        finally:
+            connection.close()
+        return render_template("review.html", records=records, limit=limit, offset=offset)
+
+    @app.route("/review/<int:record_id>", methods=["GET", "POST"])
+    def review_record(record_id: int):
+        """Show a single title record for inline correction."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            record = get_record_by_id(connection, record_id)
+            if record is None:
+                return jsonify({"error": "Record not found."}), 404
+
+            if request.method == "POST":
+                corrections_saved = 0
+                image_hash = record.get("source_file_path") or ""
+                for field in _FIELD_NAMES:
+                    corrected = request.form.get(f"field_{field}", "").strip()
+                    if corrected:
+                        insert_correction(
+                            connection,
+                            record_id=record_id,
+                            field_name=field,
+                            original_value=str(record.get(field) or ""),
+                            corrected_value=corrected,
+                            image_hash=image_hash,
+                            is_ground_truth=bool(request.form.get("approve")),
+                        )
+                        corrections_saved += 1
+                return jsonify({"saved": corrections_saved}), 200
+
+            corrections = get_corrections_for_record(connection, record_id)
+        finally:
+            connection.close()
+
+        return render_template(
+            "review_record.html",
+            record=record,
+            corrections=corrections,
+            field_names=list(_FIELD_NAMES),
+        )
+
+    # ── Export endpoint ───────────────────────────────────────────────────────
+
+    @app.route("/export")
+    def export_csv():
+        """Download a NMVITIS-aligned CSV of validated records.
+
+        Optional query parameters:
+            date_from – YYYY-MM-DD  (inclusive lower bound on created_at)
+            date_to   – YYYY-MM-DD  (inclusive upper bound on created_at)
+        """
+        import tempfile
+
+        date_from = request.args.get("date_from", "").strip() or None
+        date_to = request.args.get("date_to", "").strip() or None
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            with tempfile.NamedTemporaryFile(
+                suffix=".csv", delete=False, mode="w", encoding="utf-8"
+            ) as tmp:
+                tmp_path = tmp.name
+            export_validated_to_csv_by_date(
+                connection, tmp_path, date_from=date_from, date_to=date_to
+            )
+        finally:
+            connection.close()
+
+        return send_file(
+            tmp_path,
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="nmvitis_export.csv",
+        )
+
+    # ── PDF generation endpoint ───────────────────────────────────────────────
+
+    @app.route("/api/generate-pdf/<int:record_id>")
+    def generate_pdf(record_id: int):
+        """Generate and return the NMVITIS submission PDF for a record."""
+        from pdf_generator import generate_nmvitis_pdf
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            record = get_record_by_id(connection, record_id)
+        finally:
+            connection.close()
+
+        if record is None:
+            return jsonify({"error": "Record not found."}), 404
+
+        try:
+            pdf_path = generate_nmvitis_pdf(record, output_dir=PDFS_DIR)
+        except Exception as exc:
+            return jsonify({"error": f"PDF generation failed: {exc}"}), 500
+
+        return send_file(
+            pdf_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=os.path.basename(pdf_path),
+        )
+
+    # ── NMVITIS rejection import endpoint ────────────────────────────────────
+
+    @app.route("/import-rejections", methods=["GET", "POST"])
+    def import_rejections():
+        """Accept a NMVITIS rejection CSV upload and flag affected records."""
+        if request.method == "POST":
+            upload = request.files.get("file")
+            if not upload or not upload.filename:
+                return jsonify({"error": "No file provided."}), 400
+            import tempfile
+
+            file_bytes = upload.read()
+            with tempfile.NamedTemporaryFile(
+                suffix=".csv", delete=False, mode="wb"
+            ) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+
+            connection = create_connection_from_env()
+            try:
+                initialize_database(connection)
+                count = import_nmvitis_rejections(connection, tmp_path)
+            finally:
+                connection.close()
+
+            return jsonify({"corrections_created": count})
+
+        return render_template("import_rejections.html")
+
+    # ── Back-of-title endpoints ───────────────────────────────────────────────
+
+    @app.route("/titles/<int:record_id>/back", methods=["GET", "POST"])
+    def title_back(record_id: int):
+        """Show or submit the back-of-title form for a record."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            front = get_record_by_id(connection, record_id)
+            if front is None:
+                return jsonify({"error": "Record not found."}), 404
+
+            if request.method == "POST":
+                try:
+                    odometer_raw = request.form.get("odometer_at_sale", "").strip()
+                    odometer_at_sale = int(odometer_raw) if odometer_raw.isdigit() else None
+                    sale_price_raw = request.form.get("sale_price", "").strip()
+                    sale_price = float(sale_price_raw) if sale_price_raw else None
+                except (ValueError, TypeError):
+                    odometer_at_sale = None
+                    sale_price = None
+
+                back_id = insert_title_back_record(
+                    connection,
+                    title_record_id=record_id,
+                    odometer_at_sale=odometer_at_sale,
+                    buyer_name=request.form.get("buyer_name", "").strip() or None,
+                    buyer_address=request.form.get("buyer_address", "").strip() or None,
+                    seller_name=request.form.get("seller_name", "").strip() or None,
+                    sale_price=sale_price,
+                    sale_date=request.form.get("sale_date", "").strip() or None,
+                    notes=request.form.get("notes", "").strip() or None,
+                )
+                return jsonify({"id": back_id, "saved": True})
+
+            back_record = get_title_back_record(connection, record_id)
+        finally:
+            connection.close()
+
+        return render_template(
+            "back_of_title.html",
+            front=front,
+            back=back_record,
+        )
+
+    # ── Uploaded file serving ─────────────────────────────────────────────────
+
+    @app.route("/uploads/<path:filename>")
+    def serve_upload(filename: str):
+        """Serve a saved upload for display in the review UI."""
+        safe_name = os.path.basename(filename)
+        file_path = os.path.join(UPLOADS_DIR, safe_name)
+        if not os.path.isfile(file_path):
+            return jsonify({"error": "File not found."}), 404
+        return send_file(file_path)
+
+    # ── Training data export ──────────────────────────────────────────────────
+
+    @app.route("/api/training-data")
+    def training_data():
+        """Return ground-truth corrections as JSON for training pipeline use."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            records = list_ground_truth_corrections(connection)
+        finally:
+            connection.close()
+        return jsonify({"count": len(records), "corrections": records})
 
     # ── Maintenance endpoints ─────────────────────────────────────────────────
 

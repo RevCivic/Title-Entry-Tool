@@ -23,6 +23,7 @@ from web_app import (
     get_port_from_environment,
     parse_extracted_fields,
 )
+from ai_extraction import _ALL_FIELDS
 
 _GOOD_VIN = "1HGCM82633A004352"
 _GOOD_OCR = f"VIN {_GOOD_VIN} YEAR 2003 TITLE ABC1234"
@@ -32,11 +33,25 @@ _GOOD_EXTRACTION = {
         "title_number": "ABC1234",
         "vin": _GOOD_VIN,
         "vehicle_year": 2003,
+        **{f: None for f in (
+            "make", "model", "body_style", "color", "odometer",
+            "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
+        )},
     },
     "raw_text": _GOOD_OCR,
     "source": "tesseract",
-    "confidence": {"state": 0.0, "title_number": 0.7, "vin": 0.7, "vehicle_year": 0.7},
-    "low_confidence": ["state"],
+    "confidence": {
+        "state": 0.0,
+        "title_number": 0.7,
+        "vin": 0.7,
+        "vehicle_year": 0.7,
+        **{f: 0.0 for f in (
+            "make", "model", "body_style", "color", "odometer",
+            "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
+        )},
+    },
+    "low_confidence": ["state", "make", "model", "body_style", "color", "odometer",
+                       "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date"],
 }
 
 
@@ -142,7 +157,7 @@ class WebAppParsingTests(unittest.TestCase):
         document = mock.MagicMock()
         document.__iter__.return_value = [page_with_text, page_without_text]
         fitz_open_mock.return_value = document
-        image_open_mock.return_value = object()
+        image_open_mock.return_value = _PILImage.new("RGB", (100, 80), color=(200, 200, 200))
 
         result = _extract_text_from_pdf(b"pdf-bytes")
         self.assertIn("native text", result)
@@ -279,7 +294,9 @@ class RunExtractionTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual("ai", result["source"])
         self.assertEqual("NM", result["fields"]["state"])
-        self.assertEqual([], result["low_confidence"])
+        # Core fields should not be low-confidence.
+        self.assertNotIn("state", result["low_confidence"])
+        self.assertNotIn("vin", result["low_confidence"])
 
     @mock.patch(
         "web_app.extract_fields_with_ai",
