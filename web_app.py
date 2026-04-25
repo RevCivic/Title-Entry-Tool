@@ -1,6 +1,6 @@
 import hashlib
 import io
-import json as _json_mod
+import json
 import os
 import re
 import time
@@ -275,7 +275,7 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
                 last_status = line
             continue
         try:
-            data = _json_mod.loads(json_part)
+            data = json.loads(json_part)
         except Exception:
             if line:
                 last_status = line
@@ -294,9 +294,7 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
 
     total_bytes = sum(layer_totals.values())
     current_bytes = sum(layer_completed.values())
-    percent: Optional[float] = (
-        round(current_bytes / total_bytes * 100, 1) if total_bytes > 0 else None
-    )
+    percent = round(current_bytes / total_bytes * 100, 1) if total_bytes > 0 else None
 
     return {
         "percent": percent,

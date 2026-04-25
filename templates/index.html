@@ -356,7 +356,7 @@
 
       document.getElementById('upload-form').addEventListener('submit', function (e) {
         if (_submitPending) return; // already confirmed – let it through
-        if (_currentAiStatus !== 'ready' && _currentAiStatus !== 'not_configured') {
+        if (_currentAiStatus === 'loading' || _currentAiStatus === 'unavailable') {
           e.preventDefault();
           var body = document.getElementById('ai-warn-body');
           if (_currentAiStatus === 'loading') {

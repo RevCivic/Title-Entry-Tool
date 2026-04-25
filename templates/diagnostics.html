@@ -482,9 +482,10 @@
           grid.innerHTML =
             '<p style="color:#666;font-size:.85rem">' +
             'Docker socket unavailable \u2014 container status and log features require ' +
-            'the Docker socket to be mounted into this container. ' +
-            'Check that <code>/var/run/docker.sock</code> is mounted and ' +
-            '<code>COMPOSE_PROJECT_NAME</code> is set.</p>';
+            'the Docker socket to be mounted into this container ' +
+            '(<code>-v /var/run/docker.sock:/var/run/docker.sock</code>). ' +
+            'The <code>COMPOSE_PROJECT_NAME</code> environment variable must also be set ' +
+            'to match your Compose project so containers can be discovered by label.</p>';
           return;
         }
         var services = data.services || {};
