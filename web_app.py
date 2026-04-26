@@ -24,6 +24,7 @@ from image_preprocessing import binarize_image, preprocess_title_image
 from title_entry_tool import (
     create_connection_from_env,
     get_annotation_queue,
+    get_app_setting,
     get_corrections_for_record,
     get_record_by_id,
     get_title_back_record,
@@ -35,9 +36,12 @@ from title_entry_tool import (
     insert_title_record,
     insert_training_run,
     list_ground_truth_corrections,
+    list_model_definitions,
     list_records,
     list_training_runs,
+    set_app_setting,
     update_title_record_fields,
+    upsert_model_definition,
     export_validated_to_csv_by_date,
 )
 
@@ -66,6 +70,10 @@ _FIELD_NAMES: Tuple[str, ...] = AI_ALL_FIELDS
 _AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
 _AI_STATUS_TTL = 30.0  # seconds between live probes
 
+# Active-model cache – avoids a DB round-trip on every extraction request.
+_ACTIVE_MODEL_CACHE: Dict[str, object] = {"model": None, "checked_at": 0.0}
+_ACTIVE_MODEL_TTL = 5.0  # seconds
+
 # ── Docker / maintenance ──────────────────────────────────────────────────────
 
 _DOCKER_SOCKET = "/var/run/docker.sock"
@@ -73,6 +81,49 @@ _DOCKER_SOCKET = "/var/run/docker.sock"
 _COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT_NAME", "title-entry-tool")
 # The four services this app is aware of.
 _MANAGED_SERVICES = ("title-entry-tool", "postgres", "ollama", "ollama-init")
+
+
+def _get_active_model() -> str:
+    """Return the currently-active AI model name.
+
+    Resolution order:
+      1. Module-level cache (valid for ``_ACTIVE_MODEL_TTL`` seconds).
+      2. ``app_settings`` table, key ``active_ai_model``.
+      3. ``AI_MODEL`` environment variable.
+      4. Hard-coded fallback ``"moondream"``.
+
+    Database errors are silently caught so that extraction always has a
+    model name even when the DB is unreachable.
+    """
+    now = time.monotonic()
+    cached = _ACTIVE_MODEL_CACHE.get("model")
+    if cached is not None and now - float(_ACTIVE_MODEL_CACHE["checked_at"]) < _ACTIVE_MODEL_TTL:
+        return str(cached)
+    model = ""
+    try:
+        connection = create_connection_from_env()
+        try:
+            model = get_app_setting(connection, "active_ai_model") or ""
+        finally:
+            connection.close()
+    except Exception:
+        pass
+    if not model:
+        model = os.getenv("AI_MODEL", "moondream")
+    _ACTIVE_MODEL_CACHE["model"] = model
+    _ACTIVE_MODEL_CACHE["checked_at"] = now
+    return model
+
+
+def _set_active_model(model_name: str) -> None:
+    """Persist *model_name* as the active AI model and invalidate the cache."""
+    connection = create_connection_from_env()
+    try:
+        set_app_setting(connection, "active_ai_model", model_name)
+    finally:
+        connection.close()
+    _ACTIVE_MODEL_CACHE["model"] = None
+    _ACTIVE_MODEL_CACHE["checked_at"] = 0.0
 
 
 def _docker_client():
@@ -251,7 +302,7 @@ def _check_ai_status() -> str:
         status = "not_configured"
     else:
         endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
-        model_base = os.getenv("AI_MODEL", "moondream").rsplit(":", 1)[0]
+        model_base = _get_active_model().rsplit(":", 1)[0]
         try:
             response = requests.get(f"{endpoint}/api/tags", timeout=2)
             response.raise_for_status()
@@ -635,7 +686,7 @@ def _run_extraction(
 
     if provider in ("ai", "hybrid"):
         try:
-            ai_result = extract_fields_with_ai(filename, file_bytes)
+            ai_result = extract_fields_with_ai(filename, file_bytes, model=_get_active_model())
         except Exception:
             ai_result = None
 
