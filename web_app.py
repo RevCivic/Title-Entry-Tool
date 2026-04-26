@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -208,6 +209,24 @@ def _start_ai_services(client) -> Dict[str, Any]:
     return {"success": len(errors) == 0, "messages": messages, "errors": errors}
 
 
+def _pull_ai_model(endpoint: str, model: str) -> None:
+    """Pull an Ollama model via the Ollama API.
+
+    Intended to be called in a background thread so the HTTP response is
+    returned to the caller immediately.  Any network or API errors are
+    silently suppressed; the diagnostics polling loop will reflect the
+    resulting state via ``_check_ai_status`` and ``_get_ai_pull_progress``.
+    """
+    try:
+        requests.post(
+            f"{endpoint}/api/pull",
+            json={"model": model, "stream": False},
+            timeout=600,
+        )
+    except Exception:
+        pass
+
+
 # ── AI status ─────────────────────────────────────────────────────────────────
 
 
@@ -268,6 +287,10 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
     layer_totals: Dict[str, int] = {}
     layer_completed: Dict[str, int] = {}
     last_status = ""
+    pull_error = ""
+
+    # Patterns that indicate a fatal pull failure in plain-text log output.
+    _ERROR_PATTERNS = ("file does not exist", "not found", "pull failed", "error:")
 
     for line in log_lines:
         line = line.strip()
@@ -278,6 +301,8 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
             # Plain-text log line – keep it as a fallback status message.
             if line:
                 last_status = line
+                if not pull_error and any(pat in line.lower() for pat in _ERROR_PATTERNS):
+                    pull_error = line
             continue
         try:
             data = json.loads(json_part)
@@ -289,6 +314,11 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
         status = data.get("status", "")
         if status:
             last_status = status
+
+        # Capture any error field Ollama may embed in a streaming JSON line.
+        err = data.get("error", "")
+        if err and not pull_error:
+            pull_error = str(err)
 
         digest = data.get("digest", "")
         total = data.get("total")
@@ -307,6 +337,7 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
         "current_bytes": current_bytes,
         "total_bytes": total_bytes,
         "layers": len(layer_totals),
+        "pull_error": pull_error,
     }
 
 
@@ -321,6 +352,7 @@ def _get_ai_pull_progress() -> Dict[str, Any]:
             "current_bytes": 0,
             "total_bytes": 0,
             "layers": 0,
+            "pull_error": "",
         }
     logs_result = _get_service_logs(client, "ollama-init", lines=300)
     if logs_result.get("error") or not logs_result.get("lines"):
@@ -331,6 +363,7 @@ def _get_ai_pull_progress() -> Dict[str, Any]:
             "current_bytes": 0,
             "total_bytes": 0,
             "layers": 0,
+            "pull_error": "",
         }
     progress = _parse_pull_progress_from_logs(logs_result["lines"])
     progress["available"] = True
@@ -844,6 +877,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             ai_endpoint        – configured AI_ENDPOINT value
             pull_progress      – progress dict (only populated when status == "loading"),
                                  or None otherwise
+            manifest_missing   – True when pull_progress indicates a manifest/file error
         """
         status = _check_ai_status()
         endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
@@ -854,9 +888,17 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             "ai_model": model,
             "ai_endpoint": endpoint,
             "pull_progress": None,
+            "manifest_missing": False,
         }
         if status == "loading":
-            result["pull_progress"] = _get_ai_pull_progress()
+            pp = _get_ai_pull_progress()
+            result["pull_progress"] = pp
+            pull_error = pp.get("pull_error", "")
+            if pull_error and any(
+                pat in pull_error.lower()
+                for pat in ("file does not exist", "manifest", "not found")
+            ):
+                result["manifest_missing"] = True
         return jsonify(result)
 
     @app.route("/", methods=["GET", "POST"])
@@ -1440,17 +1482,29 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         except requests.exceptions.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else "unknown"
             detail = ""
+            raw_error = ""
             if exc.response is not None:
                 try:
                     body = exc.response.json()
-                    detail = ": " + (body.get("error") or str(body))
+                    raw_error = body.get("error") or str(body)
+                    detail = ": " + raw_error
                 except Exception:
-                    detail = ": " + (exc.response.text or "")
+                    raw_error = exc.response.text or ""
+                    detail = ": " + raw_error
+            hint = ""
+            if raw_error and any(
+                pat in raw_error.lower()
+                for pat in ("file does not exist", "manifest", "not found")
+            ):
+                hint = (
+                    f" The base model '{base_model}' may not be present in Ollama."
+                    " Visit the Diagnostics page and use the Pull Model action to download it first."
+                )
             return (
                 jsonify(
                     {
                         "error": (
-                            f"Ollama returned HTTP {status_code} while creating the model{detail}"
+                            f"Ollama returned HTTP {status_code} while creating the model{detail}{hint}"
                         )
                     }
                 ),
@@ -1547,6 +1601,31 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         _AI_STATUS_CACHE["checked_at"] = 0.0
         result = _start_ai_services(client)
         return jsonify(result), (200 if result["success"] else 500)
+
+    @app.route("/api/maintenance/ai/pull-model", methods=["POST"])
+    def maintenance_pull_model():
+        """Initiate an Ollama model pull for the configured AI model.
+
+        The pull is executed in a background thread so this endpoint returns
+        immediately.  The diagnostics page polls ``/api/diagnostics/ai-progress``
+        to observe when the model becomes available.
+        """
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        model = os.getenv("AI_MODEL", "moondream")
+        # Invalidate the AI status cache so progress is reflected promptly.
+        _AI_STATUS_CACHE["checked_at"] = 0.0
+        t = threading.Thread(target=_pull_ai_model, args=(endpoint, model), daemon=True)
+        t.start()
+        return jsonify(
+            {
+                "success": True,
+                "message": (
+                    f"Pull initiated for '{model}'. "
+                    "The model will download in the background. "
+                    "Watch the AI status badge above for progress."
+                ),
+            }
+        )
 
     return app
 
