@@ -18,6 +18,7 @@ from web_app import (
     _get_service_logs,
     _get_word_confidences,
     _parse_pull_progress_from_logs,
+    _pull_ai_model,
     _run_extraction,
     _start_ai_services,
     _tesseract_fields_and_confidence,
@@ -811,6 +812,120 @@ class PullProgressParsingTests(unittest.TestCase):
         ]
         result = self._parse(lines)
         self.assertEqual(50.0, result["percent"])
+
+    def test_detects_error_field_in_json_line(self) -> None:
+        lines = [
+            '{"status":"pulling manifest"}',
+            '{"error":"pull model manifest: file does not exist"}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual("pull model manifest: file does not exist", result["pull_error"])
+
+    def test_detects_error_in_plain_text_line(self) -> None:
+        lines = [
+            '2024-01-01T00:00:00.000000000Z Error: file does not exist',
+        ]
+        result = self._parse(lines)
+        self.assertIn("file does not exist", result["pull_error"])
+
+    def test_pull_error_empty_when_no_error(self) -> None:
+        lines = [
+            '{"status":"pulling manifest"}',
+            '{"status":"pulling layer","digest":"sha256:abc","total":100,"completed":100}',
+            '{"status":"success"}',
+        ]
+        result = self._parse(lines)
+        self.assertEqual("", result["pull_error"])
+
+    def test_pull_error_present_in_empty_input(self) -> None:
+        result = self._parse([])
+        self.assertIn("pull_error", result)
+        self.assertEqual("", result["pull_error"])
+
+
+class PullModelEndpointTests(unittest.TestCase):
+    """Tests for POST /api/maintenance/ai/pull-model."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app.threading.Thread")
+    def test_pull_model_endpoint_initiates_background_thread(
+        self, thread_cls_mock: mock.Mock
+    ) -> None:
+        mock_thread = mock.Mock()
+        thread_cls_mock.return_value = mock_thread
+        client = self._app().test_client()
+        response = client.post("/api/maintenance/ai/pull-model")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertIn("message", data)
+        mock_thread.start.assert_called_once()
+
+    @mock.patch("web_app.threading.Thread")
+    def test_pull_model_endpoint_invalidates_ai_cache(
+        self, thread_cls_mock: mock.Mock
+    ) -> None:
+        import web_app
+        thread_cls_mock.return_value = mock.Mock()
+        web_app._AI_STATUS_CACHE["checked_at"] = 9999.0
+        client = self._app().test_client()
+        client.post("/api/maintenance/ai/pull-model")
+        self.assertEqual(0.0, web_app._AI_STATUS_CACHE["checked_at"])
+
+
+class AiProgressManifestMissingTests(unittest.TestCase):
+    """Tests for manifest_missing flag in /api/diagnostics/ai-progress."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app._get_ai_pull_progress")
+    @mock.patch("web_app._check_ai_status", return_value="loading")
+    def test_manifest_missing_true_when_file_does_not_exist(
+        self, _status_mock: mock.Mock, progress_mock: mock.Mock
+    ) -> None:
+        progress_mock.return_value = {
+            "available": True,
+            "percent": None,
+            "status_message": "pulling manifest",
+            "current_bytes": 0,
+            "total_bytes": 0,
+            "layers": 0,
+            "pull_error": "pull model manifest: file does not exist",
+        }
+        client = self._app().test_client()
+        data = json.loads(client.get("/api/diagnostics/ai-progress").data)
+        self.assertTrue(data["manifest_missing"])
+
+    @mock.patch("web_app._get_ai_pull_progress")
+    @mock.patch("web_app._check_ai_status", return_value="loading")
+    def test_manifest_missing_false_when_no_error(
+        self, _status_mock: mock.Mock, progress_mock: mock.Mock
+    ) -> None:
+        progress_mock.return_value = {
+            "available": True,
+            "percent": 42.0,
+            "status_message": "pulling layer",
+            "current_bytes": 420000000,
+            "total_bytes": 1000000000,
+            "layers": 3,
+            "pull_error": "",
+        }
+        client = self._app().test_client()
+        data = json.loads(client.get("/api/diagnostics/ai-progress").data)
+        self.assertFalse(data["manifest_missing"])
+
+    @mock.patch("web_app._check_ai_status", return_value="ready")
+    def test_manifest_missing_false_when_ready(self, _mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        data = json.loads(client.get("/api/diagnostics/ai-progress").data)
+        self.assertFalse(data["manifest_missing"])
 
 
 class AnnotationQueueRouteTests(unittest.TestCase):

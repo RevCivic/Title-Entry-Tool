@@ -260,6 +260,10 @@
                   style="display:none" onclick="startAI()">
             &#9654; Start AI Services
           </button>
+          <button class="btn btn-primary btn-sm" id="pull-model-btn"
+                  style="display:none" onclick="pullModel()">
+            &#11015; Pull Model
+          </button>
         </div>
         <p id="ai-action-msg" style="font-size:.8rem;min-height:1.2em;margin-bottom:.5rem"></p>
 
@@ -290,6 +294,9 @@
           <p id="pull-status-msg"></p>
           <p id="pull-bytes-msg"></p>
         </div>
+
+        <!-- Pull-error alert (shown when a manifest / file-not-found error is detected) -->
+        <div id="pull-error-alert" class="flash flash-err" style="display:none;margin-top:.75rem"></div>
       </div>
 
       <!-- ── Container Status ─────────────────────────────────────────────── -->
@@ -357,11 +364,13 @@
       function applyAiProgress(data) {
         var badge    = document.getElementById('ai-status-badge');
         var startBtn = document.getElementById('start-ai-btn');
+        var pullBtn  = document.getElementById('pull-model-btn');
         var pullSec  = document.getElementById('pull-section');
         var bar      = document.getElementById('pull-bar');
         var pctLbl   = document.getElementById('pull-pct-label');
         var statusMsg= document.getElementById('pull-status-msg');
         var bytesMsg = document.getElementById('pull-bytes-msg');
+        var errAlert = document.getElementById('pull-error-alert');
 
         document.getElementById('ai-provider').textContent = data.extraction_provider || '—';
         document.getElementById('ai-model').textContent    = data.ai_model || '—';
@@ -373,12 +382,27 @@
         if (s === 'ready') {
           setBadge(badge, 'badge-ok', '\u2713 Ready \u2014 model loaded');
           startBtn.style.display = 'none';
+          pullBtn.style.display  = 'none';
           pullSec.style.display  = 'none';
+          errAlert.style.display = 'none';
         } else if (s === 'loading') {
-          setBadge(badge, 'badge-warn', '\u25F4 Loading \u2014 model downloading\u2026');
+          var pp       = data.pull_progress;
+          var pullErr  = (pp && pp.pull_error) ? pp.pull_error : '';
+          var isMissing = data.manifest_missing || false;
+
+          if (isMissing || pullErr) {
+            setBadge(badge, 'badge-err', '\u2717 Pull Error \u2014 model manifest missing');
+            errAlert.textContent = 'Ollama pull error: ' + (pullErr || 'model manifest not found');
+            errAlert.style.display = '';
+          } else {
+            setBadge(badge, 'badge-warn', '\u25F4 Loading \u2014 model downloading\u2026');
+            errAlert.style.display = 'none';
+          }
+
           startBtn.style.display = 'none';
+          pullBtn.style.display  = '';
           pullSec.style.display  = '';
-          var pp = data.pull_progress;
+
           if (pp && pp.available) {
             if (pp.percent !== null && pp.percent !== undefined) {
               bar.classList.remove('indeterminate');
@@ -409,12 +433,16 @@
         } else if (s === 'not_configured') {
           setBadge(badge, 'badge-neutral', '\u2014 Not configured (OCR only)');
           startBtn.style.display = 'none';
+          pullBtn.style.display  = 'none';
           pullSec.style.display  = 'none';
+          errAlert.style.display = 'none';
         } else {
           /* unavailable */
           setBadge(badge, 'badge-err', '\u26A0 Unavailable \u2014 Ollama not reachable');
           startBtn.style.display = '';
+          pullBtn.style.display  = 'none';
           pullSec.style.display  = 'none';
+          errAlert.style.display = 'none';
         }
       }
 
@@ -459,6 +487,35 @@
             btn.innerHTML = '\u25B6 Start AI Services';
           });
       }
+
+      function pullModel() {
+        var btn = document.getElementById('pull-model-btn');
+        var msg = document.getElementById('ai-action-msg');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Pulling\u2026';
+        msg.textContent = '';
+
+        fetch('/api/maintenance/ai/pull-model', { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            msg.style.color = '#155724';
+            msg.textContent = data.message || 'Pull initiated.';
+            // Re-enable after a short delay and begin polling for status change.
+            setTimeout(function () {
+              btn.disabled = false;
+              btn.innerHTML = '\u2B07 Pull Model';
+            }, 8000);
+            setTimeout(refreshAI, 4000);
+          })
+          .catch(function (e) {
+            msg.style.color = '#721c24';
+            msg.textContent = 'Request failed: ' + e;
+            btn.disabled = false;
+            btn.innerHTML = '\u2B07 Pull Model';
+          });
+      }
+
+      window.pullModel = pullModel;
 
       /* ── Container status ──────────────────────────────────────────────── */
       var _openLogService = null;
