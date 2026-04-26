@@ -724,15 +724,16 @@ _LLM_FIELDS: Tuple[str, ...] = (
 _LLM_MAX_EXAMPLES = 30
 
 
-def _build_llm_modelfile(corrections: List[Dict[str, Any]], base_model: str) -> str:
-    """Build an Ollama Modelfile incorporating ground-truth few-shot examples.
+def _build_llm_payload(corrections: List[Dict[str, Any]], base_model: str) -> Dict[str, Any]:
+    """Build an Ollama ``/api/create`` payload incorporating ground-truth few-shot examples.
 
-    The generated Modelfile:
-    - Starts from the configured base model (``FROM <base_model>``).
-    - Adds a detailed SYSTEM prompt covering all 14 NMVITIS fields.
-    - Injects up to ``_LLM_MAX_EXAMPLES`` MESSAGE pairs (one per annotated
-      title record) so the model learns the expected JSON output format from
-      real ground-truth corrections.
+    Returns a dict suitable for posting directly to the Ollama ``/api/create``
+    endpoint using the structured-field API (Ollama ≥ 0.6).  The payload:
+
+    - Sets ``from`` to the configured base model.
+    - Sets ``system`` to a detailed prompt covering all 14 NMVITIS fields.
+    - Populates ``messages`` with up to ``_LLM_MAX_EXAMPLES`` user/assistant
+      pairs derived from the ground-truth corrections.
 
     Parameters
     ----------
@@ -784,25 +785,22 @@ def _build_llm_modelfile(corrections: List[Dict[str, Any]], base_model: str) -> 
         "Extract all fields from this vehicle title image and return them as a JSON object."
     )
 
-    lines: List[str] = [
-        f"FROM {base_model}",
-        "",
-        f'SYSTEM """\n{system_prompt}\n"""',
-    ]
-
-    # Add few-shot MESSAGE pairs from ground-truth corrections.
+    messages: List[Dict[str, str]] = []
     for labels in list(by_record.values())[:_LLM_MAX_EXAMPLES]:
         full_labels: Dict[str, Any] = {f: labels.get(f) for f in _LLM_FIELDS}
-        # Strip triple-quotes from values to avoid breaking Modelfile syntax.
+        # Strip double-quotes sequences that could break JSON embedding.
         for k, v in full_labels.items():
             if isinstance(v, str):
                 full_labels[k] = v.replace('"""', "")
         assistant_msg = json.dumps(full_labels, ensure_ascii=False)
-        lines.append("")
-        lines.append(f'MESSAGE user "{user_msg}"')
-        lines.append(f'MESSAGE assistant """\n{assistant_msg}\n"""')
+        messages.append({"role": "user", "content": user_msg})
+        messages.append({"role": "assistant", "content": assistant_msg})
 
-    return "\n".join(lines)
+    return {
+        "from": base_model,
+        "system": system_prompt,
+        "messages": messages,
+    }
 
 
 def create_app(default_state: str = DEFAULT_STATE) -> Flask:
@@ -1410,13 +1408,15 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 ),
                 400,
             )
-        modelfile = _build_llm_modelfile(corrections, base_model)
+        payload = _build_llm_payload(corrections, base_model)
+        payload["model"] = custom_model
+        payload["stream"] = False
 
         endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
         try:
             resp = requests.post(
                 f"{endpoint}/api/create",
-                json={"name": custom_model, "modelfile": modelfile, "stream": False},
+                json=payload,
                 timeout=120,
             )
             resp.raise_for_status()

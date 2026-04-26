@@ -8,7 +8,7 @@ from PIL import Image as _PILImage
 
 from web_app import (
     _apply_word_confidence,
-    _build_llm_modelfile,
+    _build_llm_payload,
     _check_ai_status,
     _docker_client,
     _extract_text_from_image,
@@ -1023,9 +1023,9 @@ class ReviewRecordBulkApproveTests(unittest.TestCase):
 
 
 class ApplyToLLMTests(unittest.TestCase):
-    """Tests for _build_llm_modelfile() and POST /api/training/apply-to-llm."""
+    """Tests for _build_llm_payload() and POST /api/training/apply-to-llm."""
 
-    # ── _build_llm_modelfile unit tests ───────────────────────────────────────
+    # ── _build_llm_payload unit tests ─────────────────────────────────────────
 
     def _make_correction(self, record_id: int, field: str, value: str) -> dict:
         return {
@@ -1035,63 +1035,67 @@ class ApplyToLLMTests(unittest.TestCase):
             "source_file_path": None,
         }
 
-    def test_modelfile_starts_with_from_base_model(self) -> None:
-        result = _build_llm_modelfile([], "moondream")
-        self.assertTrue(result.startswith("FROM moondream"))
+    def test_payload_has_from_base_model(self) -> None:
+        payload = _build_llm_payload([], "moondream")
+        self.assertEqual("moondream", payload["from"])
 
-    def test_modelfile_contains_system_block(self) -> None:
-        result = _build_llm_modelfile([], "moondream")
-        self.assertIn('SYSTEM """', result)
-        self.assertIn("vehicle title OCR assistant", result)
-        self.assertIn("title_number", result)
+    def test_payload_contains_system_prompt(self) -> None:
+        payload = _build_llm_payload([], "moondream")
+        self.assertIn("vehicle title OCR assistant", payload["system"])
+        self.assertIn("title_number", payload["system"])
 
-    def test_modelfile_with_no_corrections_has_no_message_pairs(self) -> None:
-        result = _build_llm_modelfile([], "moondream")
-        self.assertNotIn("MESSAGE", result)
+    def test_payload_with_no_corrections_has_no_messages(self) -> None:
+        payload = _build_llm_payload([], "moondream")
+        self.assertEqual([], payload["messages"])
 
-    def test_modelfile_adds_message_pairs_for_each_record(self) -> None:
+    def test_payload_adds_message_pairs_for_each_record(self) -> None:
         corrections = [
             self._make_correction(1, "state", "NM"),
             self._make_correction(1, "vin", "1HGCM82633A004352"),
             self._make_correction(2, "state", "TX"),
         ]
-        result = _build_llm_modelfile(corrections, "moondream")
-        # Two distinct record_ids → two MESSAGE user/assistant pairs.
-        self.assertEqual(2, result.count("MESSAGE user"))
-        self.assertEqual(2, result.count("MESSAGE assistant"))
+        payload = _build_llm_payload(corrections, "moondream")
+        # Two distinct record_ids → two user/assistant pairs (4 messages total).
+        user_msgs = [m for m in payload["messages"] if m["role"] == "user"]
+        asst_msgs = [m for m in payload["messages"] if m["role"] == "assistant"]
+        self.assertEqual(2, len(user_msgs))
+        self.assertEqual(2, len(asst_msgs))
 
-    def test_modelfile_assistant_message_contains_corrected_values(self) -> None:
+    def test_payload_assistant_message_contains_corrected_values(self) -> None:
         corrections = [self._make_correction(1, "state", "NM")]
-        result = _build_llm_modelfile(corrections, "moondream")
-        self.assertIn('"NM"', result)
+        payload = _build_llm_payload(corrections, "moondream")
+        asst_content = next(m["content"] for m in payload["messages"] if m["role"] == "assistant")
+        self.assertIn('"NM"', asst_content)
 
-    def test_modelfile_caps_examples_at_max(self) -> None:
+    def test_payload_caps_examples_at_max(self) -> None:
         from web_app import _LLM_MAX_EXAMPLES
         corrections = [
             self._make_correction(i, "state", "NM") for i in range(_LLM_MAX_EXAMPLES + 10)
         ]
-        result = _build_llm_modelfile(corrections, "moondream")
-        self.assertEqual(_LLM_MAX_EXAMPLES, result.count("MESSAGE user"))
+        payload = _build_llm_payload(corrections, "moondream")
+        user_msgs = [m for m in payload["messages"] if m["role"] == "user"]
+        self.assertEqual(_LLM_MAX_EXAMPLES, len(user_msgs))
 
-    def test_modelfile_sanitises_triple_quotes_in_values(self) -> None:
+    def test_payload_sanitises_triple_quotes_in_values(self) -> None:
         corrections = [self._make_correction(1, "owner_name", 'Bad"""Value')]
-        result = _build_llm_modelfile(corrections, "moondream")
-        # Triple-quotes in the value must be stripped; the Modelfile must
-        # still contain exactly one MESSAGE block.
-        self.assertEqual(1, result.count("MESSAGE assistant"))
-        self.assertNotIn('Bad"""Value', result)
+        payload = _build_llm_payload(corrections, "moondream")
+        # Triple-quotes in the value must be stripped.
+        asst_msgs = [m for m in payload["messages"] if m["role"] == "assistant"]
+        self.assertEqual(1, len(asst_msgs))
+        self.assertNotIn('Bad"""Value', asst_msgs[0]["content"])
         # Value with triple-quotes removed ("BadValue") must appear.
-        self.assertIn("BadValue", result)
+        self.assertIn("BadValue", asst_msgs[0]["content"])
 
-    def test_modelfile_includes_all_14_fields_in_assistant_json(self) -> None:
+    def test_payload_includes_all_14_fields_in_assistant_json(self) -> None:
         corrections = [self._make_correction(1, "state", "NM")]
-        result = _build_llm_modelfile(corrections, "moondream")
+        payload = _build_llm_payload(corrections, "moondream")
+        asst_content = next(m["content"] for m in payload["messages"] if m["role"] == "assistant")
         for field in (
             "state", "title_number", "vin", "vehicle_year", "make", "model",
             "body_style", "color", "odometer", "owner_name", "owner_address",
             "purchase_price", "sale_date", "issue_date",
         ):
-            self.assertIn(f'"{field}"', result)
+            self.assertIn(f'"{field}"', asst_content)
 
     # ── /api/training/apply-to-llm endpoint tests ────────────────────────────
 
@@ -1158,7 +1162,7 @@ class ApplyToLLMTests(unittest.TestCase):
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
     @mock.patch("web_app.initialize_database")
     @mock.patch("web_app.create_connection_from_env")
-    def test_posts_modelfile_to_ollama(
+    def test_posts_structured_payload_to_ollama(
         self,
         conn_mock: mock.Mock,
         _init_mock: mock.Mock,
@@ -1175,8 +1179,10 @@ class ApplyToLLMTests(unittest.TestCase):
 
         post_mock.assert_called_once()
         payload = post_mock.call_args.kwargs.get("json") or post_mock.call_args.args[1]
-        self.assertEqual("titles-custom", payload["name"])
-        self.assertIn("modelfile", payload)
+        self.assertEqual("titles-custom", payload["model"])
+        self.assertIn("from", payload)
+        self.assertIn("system", payload)
+        self.assertIn("messages", payload)
         self.assertFalse(payload.get("stream", True))
 
     @mock.patch(
@@ -1277,7 +1283,7 @@ class ApplyToLLMTests(unittest.TestCase):
         post_mock: mock.Mock,
         _run_mock: mock.Mock,
     ) -> None:
-        """LLM_BASE_MODEL should be used in the Modelfile FROM directive."""
+        """LLM_BASE_MODEL should be used in the ``from`` field of the payload."""
         conn_mock.return_value = mock.Mock()
         ollama_resp = mock.Mock()
         ollama_resp.raise_for_status = mock.Mock()
@@ -1292,7 +1298,7 @@ class ApplyToLLMTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         payload = post_mock.call_args.kwargs.get("json") or post_mock.call_args.args[1]
-        self.assertIn("FROM llava", payload["modelfile"])
+        self.assertEqual("llava", payload["from"])
 
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
     @mock.patch("web_app.initialize_database")
