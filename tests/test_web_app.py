@@ -7,6 +7,7 @@ from PIL import Image as _PILImage
 
 from web_app import (
     _apply_word_confidence,
+    _build_llm_modelfile,
     _check_ai_status,
     _docker_client,
     _extract_text_from_image,
@@ -1018,6 +1019,229 @@ class ReviewRecordBulkApproveTests(unittest.TestCase):
         insert_mock.assert_called_once()
         _call_kwargs = insert_mock.call_args[1]
         self.assertTrue(_call_kwargs.get("is_ground_truth"))
+
+
+class ApplyToLLMTests(unittest.TestCase):
+    """Tests for _build_llm_modelfile() and POST /api/training/apply-to-llm."""
+
+    # ── _build_llm_modelfile unit tests ───────────────────────────────────────
+
+    def _make_correction(self, record_id: int, field: str, value: str) -> dict:
+        return {
+            "record_id": record_id,
+            "field_name": field,
+            "corrected_value": value,
+            "source_file_path": None,
+        }
+
+    def test_modelfile_starts_with_from_base_model(self) -> None:
+        result = _build_llm_modelfile([], "moondream")
+        self.assertTrue(result.startswith("FROM moondream"))
+
+    def test_modelfile_contains_system_block(self) -> None:
+        result = _build_llm_modelfile([], "moondream")
+        self.assertIn('SYSTEM """', result)
+        self.assertIn("vehicle title OCR assistant", result)
+        self.assertIn("title_number", result)
+
+    def test_modelfile_with_no_corrections_has_no_message_pairs(self) -> None:
+        result = _build_llm_modelfile([], "moondream")
+        self.assertNotIn("MESSAGE", result)
+
+    def test_modelfile_adds_message_pairs_for_each_record(self) -> None:
+        corrections = [
+            self._make_correction(1, "state", "NM"),
+            self._make_correction(1, "vin", "1HGCM82633A004352"),
+            self._make_correction(2, "state", "TX"),
+        ]
+        result = _build_llm_modelfile(corrections, "moondream")
+        # Two distinct record_ids → two MESSAGE user/assistant pairs.
+        self.assertEqual(2, result.count("MESSAGE user"))
+        self.assertEqual(2, result.count("MESSAGE assistant"))
+
+    def test_modelfile_assistant_message_contains_corrected_values(self) -> None:
+        corrections = [self._make_correction(1, "state", "NM")]
+        result = _build_llm_modelfile(corrections, "moondream")
+        self.assertIn('"NM"', result)
+
+    def test_modelfile_caps_examples_at_max(self) -> None:
+        from web_app import _LLM_MAX_EXAMPLES
+        corrections = [
+            self._make_correction(i, "state", "NM") for i in range(_LLM_MAX_EXAMPLES + 10)
+        ]
+        result = _build_llm_modelfile(corrections, "moondream")
+        self.assertEqual(_LLM_MAX_EXAMPLES, result.count("MESSAGE user"))
+
+    def test_modelfile_sanitises_triple_quotes_in_values(self) -> None:
+        corrections = [self._make_correction(1, "owner_name", 'Bad"""Value')]
+        result = _build_llm_modelfile(corrections, "moondream")
+        # The triple-quote in the value must be replaced; the Modelfile must
+        # still contain only one MESSAGE block.
+        self.assertEqual(1, result.count("MESSAGE assistant"))
+        self.assertNotIn('Bad"""Value', result)
+
+    def test_modelfile_includes_all_14_fields_in_assistant_json(self) -> None:
+        corrections = [self._make_correction(1, "state", "NM")]
+        result = _build_llm_modelfile(corrections, "moondream")
+        for field in (
+            "state", "title_number", "vin", "vehicle_year", "make", "model",
+            "body_style", "color", "odometer", "owner_name", "owner_address",
+            "purchase_price", "sale_date", "issue_date",
+        ):
+            self.assertIn(f'"{field}"', result)
+
+    # ── /api/training/apply-to-llm endpoint tests ────────────────────────────
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    _SAMPLE_CORRECTIONS = [
+        {
+            "record_id": 1,
+            "field_name": "state",
+            "corrected_value": "NM",
+            "source_file_path": None,
+        }
+    ]
+
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=[])
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_400_when_no_corrections(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.post("/api/training/apply-to-llm")
+        self.assertEqual(400, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+
+    @mock.patch("web_app.insert_training_run", return_value=7)
+    @mock.patch("web_app.requests.post")
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_model_name_on_success(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        post_mock: mock.Mock,
+        _run_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        post_mock.return_value = ollama_resp
+
+        client = self._app().test_client()
+        response = client.post("/api/training/apply-to-llm")
+
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("titles-custom", data["model"])
+        self.assertIn("message", data)
+        self.assertIn("run_id", data)
+        self.assertEqual(7, data["run_id"])
+
+    @mock.patch("web_app.insert_training_run", return_value=1)
+    @mock.patch("web_app.requests.post")
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_posts_modelfile_to_ollama(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        post_mock: mock.Mock,
+        _run_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        post_mock.return_value = ollama_resp
+
+        self._app().test_client().post("/api/training/apply-to-llm")
+
+        post_mock.assert_called_once()
+        call_kwargs = post_mock.call_args
+        payload = call_kwargs[1]["json"] if call_kwargs[1] else call_kwargs[0][1]
+        self.assertEqual("titles-custom", payload["name"])
+        self.assertIn("modelfile", payload)
+        self.assertFalse(payload.get("stream", True))
+
+    @mock.patch(
+        "web_app.requests.post",
+        side_effect=__import__("requests").exceptions.ConnectionError("refused"),
+    )
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_503_when_ollama_unavailable(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        _post_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.post("/api/training/apply-to-llm")
+        self.assertEqual(503, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+
+    @mock.patch(
+        "web_app.requests.post",
+        side_effect=__import__("requests").exceptions.Timeout("timed out"),
+    )
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_504_when_ollama_times_out(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        _post_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.post("/api/training/apply-to-llm")
+        self.assertEqual(504, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+
+    @mock.patch("web_app.insert_training_run", return_value=1)
+    @mock.patch("web_app.requests.post")
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_records_training_run_on_success(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        post_mock: mock.Mock,
+        run_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        post_mock.return_value = ollama_resp
+
+        self._app().test_client().post("/api/training/apply-to-llm")
+
+        run_mock.assert_called_once()
+        _args, kwargs = run_mock.call_args
+        self.assertIn("LLM prompt-tuning", kwargs.get("notes", _args[2] if len(_args) > 2 else ""))
 
 
 if __name__ == "__main__":
