@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from io import BytesIO
 from unittest import mock
@@ -1244,6 +1245,80 @@ class ApplyToLLMTests(unittest.TestCase):
         run_mock.assert_called_once()
         _args, kwargs = run_mock.call_args
         self.assertIn("LLM prompt-tuning", kwargs.get("notes", _args[2] if len(_args) > 2 else ""))
+
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_400_when_ai_model_is_custom_model(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+    ) -> None:
+        """AI_MODEL=titles-custom would create a circular FROM reference; guard against it."""
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        with mock.patch.dict(os.environ, {"AI_MODEL": "titles-custom"}, clear=False):
+            response = client.post("/api/training/apply-to-llm")
+        self.assertEqual(400, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+        self.assertIn("LLM_BASE_MODEL", data["error"])
+
+    @mock.patch("web_app.insert_training_run", return_value=1)
+    @mock.patch("web_app.requests.post")
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_llm_base_model_env_overrides_ai_model(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        post_mock: mock.Mock,
+        _run_mock: mock.Mock,
+    ) -> None:
+        """LLM_BASE_MODEL should be used in the Modelfile FROM directive."""
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        post_mock.return_value = ollama_resp
+
+        with mock.patch.dict(
+            os.environ,
+            {"AI_MODEL": "titles-custom", "LLM_BASE_MODEL": "llava"},
+            clear=False,
+        ):
+            response = self._app().test_client().post("/api/training/apply-to-llm")
+
+        self.assertEqual(200, response.status_code)
+        payload = post_mock.call_args[1]["json"] if post_mock.call_args[1] else post_mock.call_args[0][1]
+        self.assertIn("FROM llava", payload["modelfile"])
+
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_returns_502_with_ollama_error_detail(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+    ) -> None:
+        """HTTP errors from Ollama should include the response body in the error message."""
+        conn_mock.return_value = mock.Mock()
+        err_resp = mock.Mock()
+        err_resp.status_code = 400
+        err_resp.json.return_value = {"error": "model not found"}
+        err_resp.text = '{"error":"model not found"}'
+        http_err = __import__("requests").exceptions.HTTPError(response=err_resp)
+
+        with mock.patch("web_app.requests.post", side_effect=http_err):
+            response = self._app().test_client().post("/api/training/apply-to-llm")
+
+        self.assertEqual(502, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+        self.assertIn("model not found", data["error"])
 
 
 if __name__ == "__main__":

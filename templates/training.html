@@ -163,6 +163,12 @@
       changes required. After applying, update <code>AI_MODEL=titles-custom</code>
       in your <code>.env</code> and restart the stack.
     </p>
+    <p style="font-size:0.875rem;color:#444;">
+      <strong>Note:</strong> if you have already set <code>AI_MODEL=titles-custom</code>,
+      also add <code>LLM_BASE_MODEL=&lt;your-base-model&gt;</code>
+      (e.g. <code>LLM_BASE_MODEL=moondream</code>) so the Modelfile can reference
+      the underlying base model.
+    </p>
     <div>
       <button class="btn btn-apply" id="apply-btn" onclick="applyToLLM()">
         🤖 Apply to AI Model
