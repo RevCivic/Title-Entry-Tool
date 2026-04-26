@@ -253,7 +253,6 @@ async function applyToLLM() {
       `✔ Model <strong>${data.model}</strong> created from ` +
       `${data.records_used} annotated records (${data.corrections_used} corrections). ` +
       `Set <code>AI_MODEL=${data.model}</code> in your <code>.env</code> and restart the stack.`;
-    setTimeout(() => location.reload(), 4000);
   } finally {
     btn.disabled = false;
     btn.textContent = '🤖 Apply to AI Model';

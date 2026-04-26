@@ -796,7 +796,7 @@ def _build_llm_modelfile(corrections: List[Dict[str, Any]], base_model: str) -> 
         # Strip triple-quotes from values to avoid breaking Modelfile syntax.
         for k, v in full_labels.items():
             if isinstance(v, str):
-                full_labels[k] = v.replace('"""', '"')
+                full_labels[k] = v.replace('"""', "")
         assistant_msg = json.dumps(full_labels, ensure_ascii=False)
         lines.append("")
         lines.append(f'MESSAGE user "{user_msg}"')
@@ -1420,8 +1420,9 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 504,
             )
         except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else "unknown"
             return (
-                jsonify({"error": f"Ollama returned an error: {exc}"}),
+                jsonify({"error": f"Ollama returned HTTP {status_code} while creating the model."}),
                 502,
             )
 

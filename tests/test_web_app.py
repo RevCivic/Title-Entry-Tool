@@ -1075,10 +1075,12 @@ class ApplyToLLMTests(unittest.TestCase):
     def test_modelfile_sanitises_triple_quotes_in_values(self) -> None:
         corrections = [self._make_correction(1, "owner_name", 'Bad"""Value')]
         result = _build_llm_modelfile(corrections, "moondream")
-        # The triple-quote in the value must be replaced; the Modelfile must
-        # still contain only one MESSAGE block.
+        # Triple-quotes in the value must be stripped; the Modelfile must
+        # still contain exactly one MESSAGE block.
         self.assertEqual(1, result.count("MESSAGE assistant"))
         self.assertNotIn('Bad"""Value', result)
+        # Value with triple-quotes removed ("BadValue") must appear.
+        self.assertIn("BadValue", result)
 
     def test_modelfile_includes_all_14_fields_in_assistant_json(self) -> None:
         corrections = [self._make_correction(1, "state", "NM")]
