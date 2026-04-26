@@ -788,7 +788,7 @@ def _build_llm_payload(corrections: List[Dict[str, Any]], base_model: str) -> Di
     messages: List[Dict[str, str]] = []
     for labels in list(by_record.values())[:_LLM_MAX_EXAMPLES]:
         full_labels: Dict[str, Any] = {f: labels.get(f) for f in _LLM_FIELDS}
-        # Strip double-quotes sequences that could break JSON embedding.
+        # Strip triple-quotes from values to avoid breaking JSON string embedding.
         for k, v in full_labels.items():
             if isinstance(v, str):
                 full_labels[k] = v.replace('"""', "")
