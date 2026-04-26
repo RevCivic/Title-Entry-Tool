@@ -904,8 +904,9 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 return jsonify({"error": "Record not found."}), 404
 
             if request.method == "POST":
-                is_ground_truth = bool(
-                    request.form.get("approve") or request.form.get("bulk_approve")
+                is_ground_truth = (
+                    request.form.get("approve") == "1"
+                    or request.form.get("bulk_approve") == "1"
                 )
                 corrections_saved = 0
                 source_path = record.get("source_file_path") or ""
@@ -1202,10 +1203,11 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 sample_id = str(_uuid.uuid4())
                 src_path = record_image.get(record_id)
                 image_dest: Optional[str] = None
+                image_ext = ""
 
                 if src_path and _Path(src_path).exists():
-                    ext = _Path(src_path).suffix or ".png"
-                    image_dest = str(samples_dir / f"{sample_id}{ext}")
+                    image_ext = _Path(src_path).suffix or ".png"
+                    image_dest = str(samples_dir / f"{sample_id}{image_ext}")
                     _shutil.copy2(src_path, image_dest)
 
                 labels = {c["field_name"]: c["corrected_value"] for c in corrs}
@@ -1218,7 +1220,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                     {
                         "id": sample_id,
                         "record_id": record_id,
-                        "image": f"samples/{sample_id}{_Path(image_dest).suffix}" if image_dest else None,
+                        "image": f"samples/{sample_id}{image_ext}" if image_dest else None,
                         "labels": labels,
                         "fields": list(labels.keys()),
                     }
