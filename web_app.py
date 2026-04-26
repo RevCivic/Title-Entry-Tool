@@ -1395,7 +1395,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         # AI_MODEL, but guard against the circular case where AI_MODEL has
         # already been set to 'titles-custom' — using the custom model as its
         # own base causes Ollama to return HTTP 400.
-        base_model = os.getenv("LLM_BASE_MODEL") or os.getenv("AI_MODEL", "moondream")
+        base_model = (os.getenv("LLM_BASE_MODEL") or "").strip() or os.getenv("AI_MODEL", "moondream")
         if base_model == custom_model:
             return (
                 jsonify(

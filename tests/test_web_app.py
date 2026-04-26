@@ -1174,8 +1174,7 @@ class ApplyToLLMTests(unittest.TestCase):
         self._app().test_client().post("/api/training/apply-to-llm")
 
         post_mock.assert_called_once()
-        call_kwargs = post_mock.call_args
-        payload = call_kwargs[1]["json"] if call_kwargs[1] else call_kwargs[0][1]
+        payload = post_mock.call_args.kwargs.get("json") or post_mock.call_args.args[1]
         self.assertEqual("titles-custom", payload["name"])
         self.assertIn("modelfile", payload)
         self.assertFalse(payload.get("stream", True))
@@ -1292,7 +1291,7 @@ class ApplyToLLMTests(unittest.TestCase):
             response = self._app().test_client().post("/api/training/apply-to-llm")
 
         self.assertEqual(200, response.status_code)
-        payload = post_mock.call_args[1]["json"] if post_mock.call_args[1] else post_mock.call_args[0][1]
+        payload = post_mock.call_args.kwargs.get("json") or post_mock.call_args.args[1]
         self.assertIn("FROM llava", payload["modelfile"])
 
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
