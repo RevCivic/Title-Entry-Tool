@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Training Dashboard</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
+  h1 { color: #003366; }
+  h2 { color: #003366; font-size: 1rem; margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
+               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+  .toolbar a:hover { background: #00509e; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.25rem; margin-bottom: 1.5rem; }
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 1.25rem; }
+  .stat-number { font-size: 2.5rem; font-weight: bold; color: #003366; line-height: 1; }
+  .stat-label { font-size: 0.85rem; color: #666; margin-top: 0.25rem; }
+
+  /* ── Coverage bars ───────────────────────────────────────────────────── */
+  .coverage-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; }
+  .coverage-label { font-size: 0.8rem; color: #555; width: 90px; flex-shrink: 0; }
+  .bar-outer { flex: 1; background: #e2e8f0; border-radius: 99px; height: 14px; overflow: hidden; }
+  .bar-inner { height: 100%; background: #15803d; border-radius: 99px; }
+  .bar-pct { font-size: 0.8rem; color: #555; width: 50px; text-align: right; flex-shrink: 0; }
+
+  /* ── Field breakdown table ───────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { background: #f8f9fa; font-weight: 700; padding: 0.45rem 0.7rem; text-align: left;
+       border: 1px solid #dee2e6; }
+  td { padding: 0.4rem 0.7rem; border: 1px solid #dee2e6; }
+
+  /* ── Export card ─────────────────────────────────────────────────────── */
+  .export-section { display: flex; flex-direction: column; gap: 0.75rem; }
+  .export-section textarea { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #ccc;
+                              border-radius: 4px; font-size: 0.875rem; resize: vertical; }
+  .btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1.1rem;
+         border: none; border-radius: 4px; font-size: 0.9rem; font-weight: bold;
+         cursor: pointer; }
+  .btn-export { background: #15803d; color: white; }
+  .btn-export:hover { background: #166534; }
+  .btn-export:disabled { opacity: 0.6; cursor: default; }
+  #export-status { font-size: 0.85rem; font-weight: bold; }
+
+  /* ── Run history ─────────────────────────────────────────────────────── */
+  .run-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .run-table th { background: #003366; color: white; padding: 0.5rem 0.8rem; text-align: left; }
+  .run-table td { padding: 0.45rem 0.8rem; border-bottom: 1px solid #e2e8f0; }
+  .run-table tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+<h1>🏭 Training Dashboard</h1>
+
+<div class="toolbar">
+  <a href="/">⬆ Upload</a>
+  <a href="/review">📋 Records</a>
+  <a href="/annotate">🔍 Annotate</a>
+</div>
+
+<!-- ── Summary stats ────────────────────────────────────────────────────── -->
+<div class="grid">
+  <div class="card">
+    <div class="stat-number">{{ stats.total_gt_corrections }}</div>
+    <div class="stat-label">Total ground-truth corrections</div>
+  </div>
+  <div class="card">
+    <div class="stat-number">{{ stats.coverage.total_records }}</div>
+    <div class="stat-label">Total title records</div>
+  </div>
+  <div class="card">
+    <div class="stat-number">{{ stats.coverage.ge1 }}</div>
+    <div class="stat-label">Records with ≥1 GT correction</div>
+  </div>
+</div>
+
+<!-- ── Coverage chart ───────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <h2>Annotation Coverage</h2>
+  {% set total = stats.coverage.total_records %}
+  {% for threshold, count, label in [
+      (1,  stats.coverage.ge1,  '≥ 1 GT correction'),
+      (5,  stats.coverage.ge5,  '≥ 5 GT corrections'),
+      (10, stats.coverage.ge10, '≥ 10 GT corrections'),
+  ] %}
+  {% set pct = ((count / total * 100) | round | int) if total > 0 else 0 %}
+  <div class="coverage-row">
+    <div class="coverage-label">{{ label }}</div>
+    <div class="bar-outer">
+      <div class="bar-inner" style="width:{{ pct }}%"></div>
+    </div>
+    <div class="bar-pct">{{ count }} / {{ total }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── Field and state breakdown ────────────────────────────────────────── -->
+<div class="grid">
+  <div class="card">
+    <h2>By Field</h2>
+    {% if stats.by_field %}
+    <table>
+      <tr><th>Field</th><th>GT Corrections</th></tr>
+      {% for row in stats.by_field %}
+      <tr><td>{{ row.field_name }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#999;font-size:0.85rem;">No ground-truth corrections yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>By State</h2>
+    {% if stats.by_state %}
+    <table>
+      <tr><th>State</th><th>GT Corrections</th></tr>
+      {% for row in stats.by_state %}
+      <tr><td>{{ row.state }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#999;font-size:0.85rem;">No ground-truth corrections yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Export ───────────────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <h2>Export Training Data</h2>
+  <div class="export-section">
+    <p style="font-size:0.875rem;color:#444;">
+      Downloads a ZIP containing <code>manifest.json</code> and per-record
+      image + label pairs from all ground-truth corrections. Use this to fine-tune
+      a vision-language model (e.g. LLaVA LoRA) or a Tesseract custom model.
+    </p>
+    <label style="font-size:0.875rem;font-weight:600;">
+      Notes (optional – describe the model or training run):
+      <textarea id="export-notes" rows="2" placeholder="e.g. moondream fine-tune v1, exported 2024-06-01"></textarea>
+    </label>
+    <div>
+      <button class="btn btn-export" id="export-btn" onclick="startExport()">
+        ⬇ Export &amp; Download ZIP
+      </button>
+    </div>
+    <div id="export-status"></div>
+  </div>
+</div>
+
+<!-- ── Run history ──────────────────────────────────────────────────────── -->
+<div class="card">
+  <h2>Export History</h2>
+  {% if runs %}
+  <table class="run-table">
+    <thead>
+      <tr><th>ID</th><th>Exported At</th><th>Samples</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>{{ run.id }}</td>
+        <td style="font-size:0.8rem;">{{ run.exported_at[:19] if run.exported_at else '' }}</td>
+        <td>{{ run.sample_count }}</td>
+        <td style="color:#555;">{{ run.notes or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:0.85rem;">No exports yet.</p>
+  {% endif %}
+</div>
+
+<script>
+async function startExport() {
+  const btn = document.getElementById('export-btn');
+  const status = document.getElementById('export-status');
+  const notes = document.getElementById('export-notes').value;
+  btn.disabled = true;
+  btn.textContent = '⏳ Exporting…';
+  status.textContent = '';
+
+  try {
+    const body = new FormData();
+    body.append('notes', notes);
+    const resp = await fetch('/api/training/export', { method: 'POST', body });
+    if (!resp.ok) {
+      const err = await resp.text();
+      status.style.color = '#991b1b';
+      status.textContent = 'Export failed: ' + err;
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'training_data.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    status.style.color = '#15803d';
+    status.textContent = '✔ Export complete – check your downloads.';
+    setTimeout(() => location.reload(), 2000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ Export & Download ZIP';
+  }
+}
+</script>
+</body>
+</html>

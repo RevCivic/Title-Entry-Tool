@@ -7,11 +7,16 @@ from unittest import mock
 
 from title_entry_tool import (
     export_validated_to_csv,
+    get_annotation_queue,
     get_record_by_id,
+    get_training_stats,
     initialize_database,
     insert_correction,
     insert_title_back_record,
     insert_title_record,
+    insert_training_run,
+    list_training_runs,
+    update_title_record_fields,
     validate_record,
 )
 
@@ -181,6 +186,82 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertIn("title_records", all_sql)
         self.assertIn("corrections", all_sql)
         self.assertIn("title_back_records", all_sql)
+        self.assertIn("training_runs", all_sql)
+
+    def test_update_title_record_fields_builds_update_sql(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=("TITLE123", "1HGCM82633A004352", 2003))
+        update_title_record_fields(connection, record_id=1, fields={"make": "HONDA", "color": "RED"})
+        # The first execute call is the UPDATE; the second fetches for re-validation.
+        first_sql = repr(cursor.execute.call_args_list[0][0][0])
+        self.assertIn("UPDATE", first_sql)
+        self.assertIn("title_records", first_sql)
+
+    def test_update_title_record_fields_ignores_unknown_columns(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=("T1", "1HGCM82633A004352", 2020))
+        update_title_record_fields(
+            connection, record_id=1, fields={"make": "FORD", "__evil": "DROP TABLE"}
+        )
+        first_sql = repr(cursor.execute.call_args_list[0][0][0])
+        self.assertNotIn("__evil", first_sql)
+        self.assertNotIn("DROP", first_sql)
+
+    def test_update_title_record_fields_noop_for_empty_dict(self) -> None:
+        connection, cursor = _make_connection()
+        update_title_record_fields(connection, record_id=1, fields={})
+        cursor.execute.assert_not_called()
+
+    def test_insert_training_run_stores_record(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(7,))
+        run_id = insert_training_run(connection, sample_count=42, notes="test run")
+        self.assertEqual(7, run_id)
+        connection.commit.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("INSERT INTO training_runs", sql)
+
+    def test_list_training_runs_returns_all_rows(self) -> None:
+        fake_rows = [{"id": 2, "exported_at": "2024-01-01", "sample_count": 10, "notes": None, "export_path": None}]
+        connection, _ = _make_connection(cursor_rows=fake_rows)
+        runs = list_training_runs(connection)
+        self.assertEqual(1, len(runs))
+        self.assertEqual(2, runs[0]["id"])
+
+    def test_get_annotation_queue_returns_rows(self) -> None:
+        fake_rows = [
+            {"id": 1, "state": "NM", "title_number": "T1", "vin": "1HGCM82633A004352",
+             "vehicle_year": 2003, "make": None, "model": None, "color": None,
+             "is_validated": 0, "created_at": "2024-01-01", "gt_count": 0},
+        ]
+        connection, _ = _make_connection(cursor_rows=fake_rows)
+        records = get_annotation_queue(connection, limit=10, offset=0)
+        self.assertEqual(1, len(records))
+        self.assertEqual(0, records[0]["gt_count"])
+
+    def test_get_training_stats_returns_expected_keys(self) -> None:
+        cursor = mock.MagicMock()
+        # fetchone called twice: for total count, then for coverage row
+        cursor.fetchone.side_effect = [
+            {"total": 5},
+            {"total_records": 10, "ge1": 4, "ge5": 1, "ge10": 0},
+        ]
+        # fetchall called twice: for by_field, then for by_state
+        cursor.fetchall.side_effect = [
+            [{"field_name": "vin", "count": 3}],
+            [{"state": "NM", "count": 5}],
+        ]
+
+        cm = mock.MagicMock()
+        cm.__enter__ = mock.Mock(return_value=cursor)
+        cm.__exit__ = mock.Mock(return_value=False)
+
+        connection = mock.MagicMock()
+        connection.cursor.return_value = cm
+
+        stats = get_training_stats(connection)
+        self.assertEqual(5, stats["total_gt_corrections"])
+        self.assertIn("by_field", stats)
+        self.assertIn("by_state", stats)
+        self.assertIn("coverage", stats)
+        self.assertEqual(10, stats["coverage"]["total_records"])
 
 
 if __name__ == "__main__":

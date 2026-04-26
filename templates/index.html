@@ -84,7 +84,9 @@
       }
       .upload-form input[type="text"] { max-width: 120px; }
 
-      /* ── Buttons ───────────────────────────────────────────────────────── */
+      .upload-form input[type="checkbox"] { width: auto; margin-right: .4rem; }
+      .manual-toggle { display: flex; align-items: center; gap: .4rem; font-weight: 600; font-size: .875rem; cursor: pointer; }
+      .manual-hint { font-size: .8rem; color: #666; margin-top: -.2rem; font-weight: 400; }
       .btn {
         display: inline-flex;
         align-items: center;
@@ -190,6 +192,15 @@
             <strong>AI:</strong>&nbsp;<span id="ai-badge" class="badge badge-neutral">checking…</span>
           </div>
           <div class="item">
+            <a href="/review" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#128203; Records</a>
+          </div>
+          <div class="item">
+            <a href="/annotate" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#128270; Annotate</a>
+          </div>
+          <div class="item">
+            <a href="/training" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#127981; Training</a>
+          </div>
+          <div class="item">
             <a href="/diagnostics" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">
               &#128202; Diagnostics
             </a>
@@ -209,6 +220,14 @@
             PDF or image file:
             <input type="file" name="file"
               accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
+          </label>
+          <label class="manual-toggle">
+              <input type="checkbox" name="manual_entry" value="1" id="manual-entry-chk" />
+              Enter data manually (skip OCR/AI)
+            </label>
+            <div class="manual-hint" id="manual-hint" style="display:none;">
+              The file will be saved and you'll be taken directly to the annotation page.
+            </div>
           </label>
           <div>
             <button class="btn btn-primary" type="submit" id="submit-btn">&#8593; Extract and Save</button>
@@ -384,6 +403,21 @@
         _submitPending = true;
         document.getElementById('upload-form').submit();
       };
+
+      /* ── Manual entry toggle ──────────────────────────────────────────── */
+      var manualChk = document.getElementById('manual-entry-chk');
+      var manualHint = document.getElementById('manual-hint');
+      var submitBtn = document.getElementById('submit-btn');
+      function updateManualMode() {
+        if (manualChk.checked) {
+          submitBtn.textContent = '✏ Save and Annotate Manually';
+          manualHint.style.display = '';
+        } else {
+          submitBtn.innerHTML = '&#8593; Extract and Save';
+          manualHint.style.display = 'none';
+        }
+      }
+      manualChk.addEventListener('change', updateManualMode);
 
       /* ── Boot ──────────────────────────────────────────────────────────── */
       refreshStatus();
