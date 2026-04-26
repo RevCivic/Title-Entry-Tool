@@ -94,7 +94,7 @@ services:
         MODEL="$${AI_MODEL:-moondream}"
         HOST="$${OLLAMA_HOST:-http://ollama:11434}"
         HOST="$${HOST%/}"
-        echo "Preparing to pull model '$${MODEL}' from $${HOST} ..."
+        echo "Preparing model '$${MODEL}' ..."
 
         # Wait for the Ollama API to become responsive. We intentionally
         # perform this here (instead of requiring service_healthy) so orchestration
@@ -118,7 +118,21 @@ services:
           exit 0
         fi
 
-        echo "Pulling model '$${MODEL}' ..."
+        # If the model is already present locally (e.g. a custom model created via
+        # the app's Training dashboard, or a previously-pulled registry model),
+        # skip the pull entirely.  Match the model name followed by whitespace so
+        # that a name like 'titles' does not accidentally match 'titles-custom'.
+        if OLLAMA_HOST="$${HOST}" ollama list 2>/dev/null | grep -q "^$${MODEL}[[:space:]]"; then
+          echo "Model '$${MODEL}' is already available locally. Nothing to pull."
+          exit 0
+        fi
+
+        echo "Model '$${MODEL}' not found locally. Pulling from registry ..."
+        # NOTE: if '$${MODEL}' is a custom model built via the app's Training
+        # dashboard (e.g. 'titles-custom'), it cannot be downloaded from the
+        # public registry.  Use the Training UI to create it first:
+        #   Annotate → approve corrections → Apply to LLM.
+        # The pull attempts below will only succeed for public Ollama models.
 
         # Retry up to 3 times with a short back-off.  The depends_on
         # condition only guarantees the container has started; retrying guards
@@ -135,11 +149,14 @@ services:
         done
 
         echo "ERROR: failed to pull model '$${MODEL}' after 3 attempts." \
-             "Check the model name, network connectivity, and available disk" \
-             "space on the ollama_data volume." \
-             "The app will continue using OCR-only extraction until the model" \
-             "is available.  Run 'docker compose logs ollama-init' to review" \
-             "this output, then restart this service to retry." >&2
+             "If '$${MODEL}' is a custom model (e.g. built via the app's Training" \
+             "dashboard), it cannot be pulled from the registry -- use the Training" \
+             "UI to create it first (Annotate → approve corrections → Apply to LLM)." \
+             "For public registry models, check the model name, network connectivity," \
+             "and available disk space on the ollama_data volume." \
+             "The app will continue using OCR-only extraction until the model is" \
+             "available.  Run 'docker compose logs ollama-init' to review this" \
+             "output, then restart this service to retry." >&2
         # Exit 0 so orchestrators (Portainer, Compose) do not treat a failed
         # model pull as a fatal stack error and tear down the other services.
     environment:
