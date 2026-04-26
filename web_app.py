@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import fitz
 import pytesseract
 import requests
-from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, render_template, request, send_file, send_from_directory, url_for
 from PIL import Image, ImageFilter, ImageOps
 
 from ai_extraction import (
@@ -22,16 +22,21 @@ from barcode_scanner import scan_barcodes
 from image_preprocessing import binarize_image, preprocess_title_image
 from title_entry_tool import (
     create_connection_from_env,
+    get_annotation_queue,
     get_corrections_for_record,
     get_record_by_id,
     get_title_back_record,
+    get_training_stats,
     import_nmvitis_rejections,
     initialize_database,
     insert_correction,
     insert_title_back_record,
     insert_title_record,
+    insert_training_run,
     list_ground_truth_corrections,
     list_records,
+    list_training_runs,
+    update_title_record_fields,
     export_validated_to_csv_by_date,
 )
 
@@ -781,6 +786,26 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 context["error"] = "Uploaded file is empty."
                 return render_template("index.html", **context)
 
+            manual_entry = request.form.get("manual_entry") == "1"
+
+            if manual_entry:
+                state = state_override or app.config["DEFAULT_STATE"]
+                source_file_path = _save_upload(file_bytes, upload.filename or "upload")
+                connection = create_connection_from_env()
+                try:
+                    initialize_database(connection)
+                    record = insert_title_record(
+                        connection=connection,
+                        state=state,
+                        title_number="",
+                        vin="",
+                        vehicle_year=MISSING_YEAR_SENTINEL,
+                        source_file_path=source_file_path,
+                    )
+                finally:
+                    connection.close()
+                return redirect(url_for("review_record", record_id=record["id"]))
+
             extraction = _run_extraction(upload.filename, file_bytes)
             if extraction is None:
                 context["error"] = "No text could be extracted from the file."
@@ -879,8 +904,12 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 return jsonify({"error": "Record not found."}), 404
 
             if request.method == "POST":
+                is_ground_truth = bool(
+                    request.form.get("approve") or request.form.get("bulk_approve")
+                )
                 corrections_saved = 0
                 source_path = record.get("source_file_path") or ""
+                corrected_fields: Dict[str, Any] = {}
                 for field in _FIELD_NAMES:
                     corrected = request.form.get(f"field_{field}", "").strip()
                     if corrected:
@@ -891,20 +920,30 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                             original_value=str(record.get(field) or ""),
                             corrected_value=corrected,
                             image_hash=source_path,
-                            is_ground_truth=bool(request.form.get("approve")),
+                            is_ground_truth=is_ground_truth,
                         )
+                        corrected_fields[field] = corrected
                         corrections_saved += 1
+                if corrected_fields:
+                    update_title_record_fields(connection, record_id, corrected_fields)
                 return jsonify({"saved": corrections_saved}), 200
 
             corrections = get_corrections_for_record(connection, record_id)
         finally:
             connection.close()
 
+        # Build per-field GT status for the annotation progress bar.
+        gt_fields = {c["field_name"] for c in corrections if c.get("is_ground_truth")}
+        gt_count = len(gt_fields)
+
         return render_template(
             "review_record.html",
             record=record,
             corrections=corrections,
             field_names=list(_FIELD_NAMES),
+            gt_fields=gt_fields,
+            gt_count=gt_count,
+            total_fields=len(_FIELD_NAMES),
         )
 
     # ── Export endpoint ───────────────────────────────────────────────────────
@@ -1073,6 +1112,153 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         finally:
             connection.close()
         return jsonify({"count": len(records), "corrections": records})
+
+    # ── Annotation queue ──────────────────────────────────────────────────────
+
+    @app.route("/annotate")
+    def annotate_list():
+        """Annotation queue – records prioritised by least GT coverage."""
+        try:
+            limit = max(1, min(200, int(request.args.get("limit", "50"))))
+            offset = max(0, int(request.args.get("offset", "0")))
+        except (TypeError, ValueError):
+            limit, offset = 50, 0
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            records = get_annotation_queue(connection, limit=limit, offset=offset)
+        finally:
+            connection.close()
+        return render_template(
+            "annotate.html", records=records, limit=limit, offset=offset
+        )
+
+    # ── Training dashboard ────────────────────────────────────────────────────
+
+    @app.route("/training")
+    def training_dashboard():
+        """Training dashboard showing GT dataset stats and run history."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            stats = get_training_stats(connection)
+            runs = list_training_runs(connection)
+        finally:
+            connection.close()
+        return render_template("training.html", stats=stats, runs=runs)
+
+    @app.route("/api/training/stats")
+    def api_training_stats():
+        """Return ground-truth training dataset statistics as JSON."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            stats = get_training_stats(connection)
+        finally:
+            connection.close()
+        return jsonify(stats)
+
+    @app.route("/api/training/export", methods=["POST"])
+    def api_training_export():
+        """Export all ground-truth samples as a downloadable ZIP archive.
+
+        Optionally accepts a ``notes`` form field to record with the run.
+        """
+        import io as _io
+        import shutil as _shutil
+        import tempfile as _tempfile
+        import uuid as _uuid
+        import zipfile as _zipfile
+        from collections import defaultdict
+        from pathlib import Path as _Path
+
+        notes = request.form.get("notes", "").strip()
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            corrections = list_ground_truth_corrections(connection)
+        finally:
+            connection.close()
+
+        # Group corrections by record_id.
+        by_record: Dict[int, list] = defaultdict(list)
+        record_image: Dict[int, str] = {}
+        for corr in corrections:
+            rid = int(corr["record_id"])
+            by_record[rid].append(corr)
+            if corr.get("source_file_path"):
+                record_image[rid] = corr["source_file_path"]
+
+        tmp_dir = _Path(_tempfile.mkdtemp())
+        samples_dir = tmp_dir / "samples"
+        samples_dir.mkdir()
+
+        manifest_samples = []
+        exported = 0
+
+        try:
+            for record_id, corrs in by_record.items():
+                sample_id = str(_uuid.uuid4())
+                src_path = record_image.get(record_id)
+                image_dest: Optional[str] = None
+
+                if src_path and _Path(src_path).exists():
+                    ext = _Path(src_path).suffix or ".png"
+                    image_dest = str(samples_dir / f"{sample_id}{ext}")
+                    _shutil.copy2(src_path, image_dest)
+
+                labels = {c["field_name"]: c["corrected_value"] for c in corrs}
+                label_path = samples_dir / f"{sample_id}.json"
+                label_path.write_text(
+                    json.dumps(labels, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+
+                manifest_samples.append(
+                    {
+                        "id": sample_id,
+                        "record_id": record_id,
+                        "image": f"samples/{sample_id}{_Path(image_dest).suffix}" if image_dest else None,
+                        "labels": labels,
+                        "fields": list(labels.keys()),
+                    }
+                )
+                exported += 1
+
+            manifest_path = tmp_dir / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {"total": exported, "samples": manifest_samples},
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            # Build in-memory ZIP.
+            zip_buf = _io.BytesIO()
+            with _zipfile.ZipFile(zip_buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+                for file in tmp_dir.rglob("*"):
+                    if file.is_file():
+                        zf.write(file, file.relative_to(tmp_dir))
+            zip_buf.seek(0)
+        finally:
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Record the export.
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            insert_training_run(connection, sample_count=exported, notes=notes)
+        finally:
+            connection.close()
+
+        return send_file(
+            zip_buf,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name="training_data.zip",
+        )
 
     # ── Maintenance endpoints ─────────────────────────────────────────────────
 

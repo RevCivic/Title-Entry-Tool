@@ -811,6 +811,215 @@ class PullProgressParsingTests(unittest.TestCase):
         self.assertEqual(50.0, result["percent"])
 
 
+class AnnotationQueueRouteTests(unittest.TestCase):
+    """Tests for /annotate and related new routes."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app.get_annotation_queue", return_value=[])
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_annotate_route_returns_200(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _queue_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.get("/annotate")
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Annotation Queue", response.data)
+
+    @mock.patch("web_app.get_annotation_queue", return_value=[])
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_annotate_route_respects_pagination(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        queue_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        client.get("/annotate?limit=10&offset=20")
+        queue_mock.assert_called_once()
+        _args, kwargs = queue_mock.call_args
+        self.assertEqual(10, kwargs["limit"])
+        self.assertEqual(20, kwargs["offset"])
+
+
+class TrainingDashboardRouteTests(unittest.TestCase):
+    """Tests for /training and /api/training/* routes."""
+
+    _EMPTY_STATS = {
+        "total_gt_corrections": 0,
+        "by_field": [],
+        "by_state": [],
+        "coverage": {"total_records": 0, "ge1": 0, "ge5": 0, "ge10": 0},
+    }
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app.list_training_runs", return_value=[])
+    @mock.patch("web_app.get_training_stats", return_value=_EMPTY_STATS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_training_page_returns_200(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _stats_mock: mock.Mock,
+        _runs_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.get("/training")
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Training Dashboard", response.data)
+
+    @mock.patch("web_app.get_training_stats", return_value=_EMPTY_STATS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_api_training_stats_returns_json(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _stats_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.get("/api/training/stats")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("total_gt_corrections", data)
+        self.assertIn("coverage", data)
+
+    @mock.patch("web_app.insert_training_run", return_value=1)
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=[])
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_api_training_export_returns_zip(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        _run_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.post("/api/training/export", data={"notes": "test export"})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("application/zip", response.content_type)
+
+
+class ManualEntryRouteTests(unittest.TestCase):
+    """Tests for manual_entry=1 upload mode."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app.insert_title_record")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_manual_entry_redirects_to_review(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        insert_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        insert_mock.return_value = {"id": 99, "is_validated": False, "validation_errors": ["VIN"]}
+        client = self._app().test_client()
+
+        response = client.post(
+            "/",
+            data={
+                "file": (BytesIO(b"fake-image"), "title.png"),
+                "state": "NM",
+                "manual_entry": "1",
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(302, response.status_code)
+        self.assertIn("/review/99", response.headers["Location"])
+        insert_mock.assert_called_once()
+
+    @mock.patch("web_app._run_extraction")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_normal_upload_skips_manual_entry(
+        self,
+        conn_mock: mock.Mock,
+        extraction_mock: mock.Mock,
+    ) -> None:
+        extraction_mock.return_value = None
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+
+        response = client.post(
+            "/",
+            data={"file": (BytesIO(b"fake"), "title.png")},
+            content_type="multipart/form-data",
+        )
+
+        extraction_mock.assert_called_once()
+        self.assertEqual(200, response.status_code)
+
+
+class ReviewRecordBulkApproveTests(unittest.TestCase):
+    """Tests for bulk_approve flag in /review/<id> POST."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    @mock.patch("web_app.update_title_record_fields")
+    @mock.patch("web_app.insert_correction")
+    @mock.patch("web_app.get_record_by_id")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_bulk_approve_marks_corrections_as_ground_truth(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        get_record_mock: mock.Mock,
+        insert_mock: mock.Mock,
+        update_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        get_record_mock.return_value = {
+            "id": 1, "state": "NM", "title_number": "T123", "vin": "1HGCM82633A004352",
+            "vehicle_year": 2003, "source_file_path": None,
+            **{f: None for f in ("make", "model", "body_style", "color", "odometer",
+                                 "owner_name", "owner_address", "purchase_price",
+                                 "sale_date", "issue_date", "state_layout_version",
+                                 "ocr_text", "is_validated", "validation_errors",
+                                 "created_at")},
+        }
+        insert_mock.return_value = 1
+        client = self._app().test_client()
+
+        response = client.post(
+            "/review/1",
+            data={"field_vin": "1HGCM82633A004352", "bulk_approve": "1"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        insert_mock.assert_called_once()
+        _call_kwargs = insert_mock.call_args[1]
+        self.assertTrue(_call_kwargs.get("is_ground_truth"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

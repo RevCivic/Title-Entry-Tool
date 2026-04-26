@@ -161,6 +161,19 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             )
             """
         )
+
+        # Training runs table – records each ground-truth export event.
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_runs (
+                id SERIAL PRIMARY KEY,
+                exported_at TEXT NOT NULL,
+                sample_count INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                export_path TEXT
+            )
+            """
+        )
     connection.commit()
 
 
@@ -525,6 +538,191 @@ def list_ground_truth_corrections(
             ORDER BY c.id ASC
             """
         )
+        return [dict(r) for r in cursor.fetchall()]
+
+
+# Columns of title_records that may be updated via manual corrections.
+_UPDATABLE_RECORD_FIELDS = frozenset({
+    "state", "title_number", "vin", "vehicle_year",
+    "make", "model", "body_style", "color", "odometer",
+    "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
+})
+
+
+def update_title_record_fields(
+    connection: psycopg2.extensions.connection,
+    record_id: int,
+    fields: Dict[str, Any],
+) -> None:
+    """Overwrite specific columns of a title record and re-validate it."""
+    safe_fields = {k: v for k, v in fields.items() if k in _UPDATABLE_RECORD_FIELDS}
+    if not safe_fields:
+        return
+
+    set_clauses = [
+        psycopg2.sql.SQL("{} = %s").format(psycopg2.sql.Identifier(k))
+        for k in safe_fields
+    ]
+    query = psycopg2.sql.SQL(
+        "UPDATE title_records SET {} WHERE id = %s"
+    ).format(psycopg2.sql.SQL(", ").join(set_clauses))
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, list(safe_fields.values()) + [record_id])
+
+    # Re-validate and persist the updated validation state.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT title_number, vin, vehicle_year FROM title_records WHERE id = %s",
+            (record_id,),
+        )
+        row = cursor.fetchone()
+    if row:
+        title_number, vin, vehicle_year = row
+        errors = validate_record(
+            title_number or "",
+            vin or "",
+            vehicle_year or 0,
+        )
+        validation_errors = " | ".join(errors) if errors else None
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE title_records
+                SET is_validated = %s, validation_errors = %s
+                WHERE id = %s
+                """,
+                (0 if errors else 1, validation_errors, record_id),
+            )
+
+    connection.commit()
+
+
+def get_annotation_queue(
+    connection: psycopg2.extensions.connection,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Return records needing annotation ordered by priority.
+
+    Priority order:
+      1. Fewest ground-truth corrections (unannotated first).
+      2. Unvalidated records before validated.
+      3. Newest records first within each tier.
+    """
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute(
+            """
+            SELECT
+                r.id, r.state, r.title_number, r.vin, r.vehicle_year,
+                r.make, r.model, r.color, r.is_validated, r.created_at,
+                COUNT(c.id) FILTER (WHERE c.is_ground_truth = 1) AS gt_count
+            FROM title_records r
+            LEFT JOIN corrections c ON c.record_id = r.id
+            GROUP BY r.id
+            ORDER BY
+                COUNT(c.id) FILTER (WHERE c.is_ground_truth = 1) ASC,
+                r.is_validated ASC,
+                r.id DESC
+            LIMIT %s OFFSET %s
+            """,
+            (limit, offset),
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_training_stats(
+    connection: psycopg2.extensions.connection,
+) -> Dict[str, Any]:
+    """Return statistics about the ground-truth training dataset."""
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM corrections WHERE is_ground_truth = 1"
+        )
+        row = cursor.fetchone()
+        total = int(row["total"]) if row else 0
+
+        cursor.execute(
+            """
+            SELECT field_name, COUNT(*) AS count
+            FROM corrections
+            WHERE is_ground_truth = 1
+            GROUP BY field_name
+            ORDER BY count DESC
+            """
+        )
+        by_field = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            SELECT r.state, COUNT(c.id) AS count
+            FROM corrections c
+            JOIN title_records r ON c.record_id = r.id
+            WHERE c.is_ground_truth = 1
+            GROUP BY r.state
+            ORDER BY count DESC
+            """
+        )
+        by_state = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) AS total_records,
+                COUNT(CASE WHEN gt_count >= 1 THEN 1 END) AS ge1,
+                COUNT(CASE WHEN gt_count >= 5 THEN 1 END) AS ge5,
+                COUNT(CASE WHEN gt_count >= 10 THEN 1 END) AS ge10
+            FROM (
+                SELECT r.id,
+                    COUNT(c.id) FILTER (WHERE c.is_ground_truth = 1) AS gt_count
+                FROM title_records r
+                LEFT JOIN corrections c ON c.record_id = r.id
+                GROUP BY r.id
+            ) sub
+            """
+        )
+        cov_row = cursor.fetchone()
+        coverage = (
+            {k: int(v) for k, v in dict(cov_row).items()}
+            if cov_row
+            else {"total_records": 0, "ge1": 0, "ge5": 0, "ge10": 0}
+        )
+
+    return {
+        "total_gt_corrections": total,
+        "by_field": by_field,
+        "by_state": by_state,
+        "coverage": coverage,
+    }
+
+
+def insert_training_run(
+    connection: psycopg2.extensions.connection,
+    sample_count: int,
+    notes: str = "",
+    export_path: Optional[str] = None,
+) -> int:
+    """Record a training-data export event and return its id."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO training_runs (exported_at, sample_count, notes, export_path)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (datetime.utcnow().isoformat(), sample_count, notes or None, export_path),
+        )
+        run_id = cursor.fetchone()[0]
+    connection.commit()
+    return run_id
+
+
+def list_training_runs(
+    connection: psycopg2.extensions.connection,
+) -> List[Dict[str, Any]]:
+    """Return all training runs, newest first."""
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute("SELECT * FROM training_runs ORDER BY id DESC")
         return [dict(r) for r in cursor.fetchall()]
 
 

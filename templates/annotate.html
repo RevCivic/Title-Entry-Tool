@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Annotation Queue</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
+  h1 { color: #003366; }
+  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
+               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+  .toolbar a:hover { background: #00509e; }
+  .intro { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;
+           padding: 0.75rem 1rem; font-size: 0.875rem; color: #1e3a5f; margin-bottom: 1rem; }
+  table { width: 100%; border-collapse: collapse; background: white;
+          box-shadow: 0 1px 4px rgba(0,0,0,.1); border-radius: 6px; overflow: hidden; }
+  th { background: #003366; color: white; padding: 0.6rem 0.8rem; text-align: left; font-size: 0.85rem; }
+  td { padding: 0.55rem 0.8rem; font-size: 0.85rem; border-bottom: 1px solid #e2e8f0; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #eef2f7; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px;
+           font-size: 0.75rem; font-weight: bold; }
+  .badge-ok   { background: #d1fae5; color: #065f46; }
+  .badge-err  { background: #fee2e2; color: #991b1b; }
+  .badge-none { background: #e2e8f0; color: #4b5563; }
+  .pager { margin-top: 1rem; display: flex; gap: 0.5rem; }
+  .pager a { padding: 0.4rem 0.8rem; background: #e2e8f0; border-radius: 4px;
+             text-decoration: none; color: #003366; font-size: 0.85rem; }
+  .pager a:hover { background: #cbd5e1; }
+  .annotate-btn { display: inline-block; padding: 0.3rem 0.75rem; background: #15803d;
+                  color: white; text-decoration: none; border-radius: 4px; font-size: 0.82rem; }
+  .annotate-btn:hover { background: #166534; }
+</style>
+</head>
+<body>
+<h1>🔍 Annotation Queue</h1>
+
+<div class="toolbar">
+  <a href="/">⬆ Upload</a>
+  <a href="/review">📋 All Records</a>
+  <a href="/training">🏭 Training</a>
+</div>
+
+<div class="intro">
+  Records are ordered by <strong>least ground-truth coverage first</strong> so the most valuable
+  annotations are done first. Click <em>Annotate</em> to open a record and enter the correct field
+  values, then click <em>Mark All as Ground Truth</em> to add them to the training dataset.
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>State</th>
+      <th>Title #</th>
+      <th>VIN</th>
+      <th>Year</th>
+      <th>Make / Model</th>
+      <th>Status</th>
+      <th>GT Corrections</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for rec in records %}
+    <tr>
+      <td>{{ rec.id }}</td>
+      <td>{{ rec.state }}</td>
+      <td>{{ rec.title_number or '—' }}</td>
+      <td style="font-family:monospace;font-size:0.8rem;">{{ rec.vin or '—' }}</td>
+      <td>{{ rec.vehicle_year if rec.vehicle_year else '—' }}</td>
+      <td>{{ rec.make or '—' }}{% if rec.model %} / {{ rec.model }}{% endif %}</td>
+      <td>
+        {% if rec.is_validated %}
+          <span class="badge badge-ok">Valid</span>
+        {% else %}
+          <span class="badge badge-err">Needs Fix</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if rec.gt_count == 0 %}
+          <span class="badge badge-none">None</span>
+        {% else %}
+          <span class="badge badge-ok">{{ rec.gt_count }}</span>
+        {% endif %}
+      </td>
+      <td style="font-size:0.8rem;color:#666;">{{ rec.created_at[:10] if rec.created_at else '' }}</td>
+      <td>
+        <a href="/review/{{ rec.id }}" class="annotate-btn">✏ Annotate</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10" style="text-align:center;color:#999;padding:2rem;">No records found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="pager">
+  {% if offset > 0 %}
+    <a href="/annotate?limit={{ limit }}&offset={{ [offset - limit, 0]|max }}">← Previous</a>
+  {% endif %}
+  {% if records|length == limit %}
+    <a href="/annotate?limit={{ limit }}&offset={{ offset + limit }}">Next →</a>
+  {% endif %}
+</div>
+</body>
+</html>
