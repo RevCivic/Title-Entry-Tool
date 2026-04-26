@@ -1390,8 +1390,26 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 400,
             )
 
-        base_model = os.getenv("AI_MODEL", "moondream")
         custom_model = "titles-custom"
+        # LLM_BASE_MODEL explicitly sets the Modelfile FROM base.  Fall back to
+        # AI_MODEL, but guard against the circular case where AI_MODEL has
+        # already been set to 'titles-custom' — using the custom model as its
+        # own base causes Ollama to return HTTP 400.
+        base_model = (os.getenv("LLM_BASE_MODEL") or "").strip() or os.getenv("AI_MODEL", "moondream")
+        if base_model == custom_model:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"AI_MODEL is set to '{custom_model}', which cannot be used "
+                            "as its own base model. "
+                            "Add LLM_BASE_MODEL=<your-base-model> (e.g. LLM_BASE_MODEL=moondream) "
+                            "to your .env file and restart the stack, then try again."
+                        )
+                    }
+                ),
+                400,
+            )
         modelfile = _build_llm_modelfile(corrections, base_model)
 
         endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
@@ -1421,8 +1439,21 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             )
         except requests.exceptions.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else "unknown"
+            detail = ""
+            if exc.response is not None:
+                try:
+                    body = exc.response.json()
+                    detail = ": " + (body.get("error") or str(body))
+                except Exception:
+                    detail = ": " + (exc.response.text or "")
             return (
-                jsonify({"error": f"Ollama returned HTTP {status_code} while creating the model."}),
+                jsonify(
+                    {
+                        "error": (
+                            f"Ollama returned HTTP {status_code} while creating the model{detail}"
+                        )
+                    }
+                ),
                 502,
             )
 
