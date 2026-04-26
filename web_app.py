@@ -221,7 +221,7 @@ def _pull_ai_model(endpoint: str, model: str) -> None:
         requests.post(
             f"{endpoint}/api/pull",
             json={"model": model, "stream": False},
-            timeout=600,
+            timeout=1800,
         )
     except Exception:
         pass
@@ -290,7 +290,7 @@ def _parse_pull_progress_from_logs(log_lines: List[str]) -> Dict[str, Any]:
     pull_error = ""
 
     # Patterns that indicate a fatal pull failure in plain-text log output.
-    _ERROR_PATTERNS = ("file does not exist", "not found", "pull failed", "error:")
+    _ERROR_PATTERNS = ("file does not exist", "not found", "pull failed")
 
     for line in log_lines:
         line = line.strip()
