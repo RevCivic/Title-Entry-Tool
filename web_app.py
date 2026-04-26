@@ -711,6 +711,100 @@ def get_port_from_environment(default_port: int = DEFAULT_PORT) -> int:
     return port if 1 <= port <= 65535 else default_port
 
 
+# ── LLM prompt-tuning ────────────────────────────────────────────────────────
+
+# Canonical field order used by the Modelfile few-shot examples.
+_LLM_FIELDS: Tuple[str, ...] = (
+    "state", "title_number", "vin", "vehicle_year", "make", "model",
+    "body_style", "color", "odometer", "owner_name", "owner_address",
+    "purchase_price", "sale_date", "issue_date",
+)
+
+# Maximum number of few-shot MESSAGE pairs written into the Modelfile.
+_LLM_MAX_EXAMPLES = 30
+
+
+def _build_llm_modelfile(corrections: List[Dict[str, Any]], base_model: str) -> str:
+    """Build an Ollama Modelfile incorporating ground-truth few-shot examples.
+
+    The generated Modelfile:
+    - Starts from the configured base model (``FROM <base_model>``).
+    - Adds a detailed SYSTEM prompt covering all 14 NMVITIS fields.
+    - Injects up to ``_LLM_MAX_EXAMPLES`` MESSAGE pairs (one per annotated
+      title record) so the model learns the expected JSON output format from
+      real ground-truth corrections.
+
+    Parameters
+    ----------
+    corrections:
+        List of dicts returned by ``list_ground_truth_corrections()``.
+    base_model:
+        Ollama model tag used as the base (e.g. ``"moondream"``).
+    """
+    from collections import defaultdict
+
+    # Group corrections by record_id so each title becomes one example.
+    by_record: Dict[int, Dict[str, str]] = defaultdict(dict)
+    for corr in corrections:
+        rid = int(corr["record_id"])
+        field = corr.get("field_name", "")
+        value = corr.get("corrected_value") or ""
+        if field:
+            by_record[rid][field] = value
+
+    system_prompt = (
+        "You are a vehicle title OCR assistant specializing in US motor vehicle "
+        "title documents.\n\n"
+        "Extract ALL of the following fields from the vehicle title image and "
+        "return them as a single JSON object. Return null for any field that is "
+        "not clearly visible or legible.\n\n"
+        "Fields:\n"
+        "- state: Two-letter US state abbreviation (e.g. NM, TX, CA).\n"
+        "- title_number: Alphanumeric title number, 3-20 characters, no spaces.\n"
+        "- vin: 17-character Vehicle Identification Number (uppercase, no I/O/Q).\n"
+        "- vehicle_year: 4-digit model year as an integer.\n"
+        "- make: Vehicle manufacturer (e.g. FORD, CHEVROLET, TOYOTA).\n"
+        "- model: Vehicle model name (e.g. F-150, SILVERADO, CAMRY).\n"
+        "- body_style: Body style code (e.g. SDN, PK, SUV, VAN).\n"
+        "- color: Primary exterior color.\n"
+        "- odometer: Integer odometer reading in miles.\n"
+        "- owner_name: Full legal name of the registered owner.\n"
+        "- owner_address: Full mailing address of the registered owner.\n"
+        "- purchase_price: Purchase price as a numeric string (no currency symbol).\n"
+        "- sale_date: Date of sale in YYYY-MM-DD format.\n"
+        "- issue_date: Title issue date in YYYY-MM-DD format.\n\n"
+        "Rules:\n"
+        "- Return ONLY the JSON object with exactly these 14 keys.\n"
+        "- vehicle_year and odometer must be integers or null.\n"
+        "- All other fields must be strings or null.\n"
+        "- Do not include markdown, explanations, or any other text."
+    )
+
+    user_msg = (
+        "Extract all fields from this vehicle title image and return them as a JSON object."
+    )
+
+    lines: List[str] = [
+        f"FROM {base_model}",
+        "",
+        f'SYSTEM """\n{system_prompt}\n"""',
+    ]
+
+    # Add few-shot MESSAGE pairs from ground-truth corrections.
+    for labels in list(by_record.values())[:_LLM_MAX_EXAMPLES]:
+        full_labels: Dict[str, Any] = {f: labels.get(f) for f in _LLM_FIELDS}
+        # Strip triple-quotes from values to avoid breaking Modelfile syntax.
+        for k, v in full_labels.items():
+            if isinstance(v, str):
+                full_labels[k] = v.replace('"""', "")
+        assistant_msg = json.dumps(full_labels, ensure_ascii=False)
+        lines.append("")
+        lines.append(f'MESSAGE user "{user_msg}"')
+        lines.append(f'MESSAGE assistant """\n{assistant_msg}\n"""')
+
+    return "\n".join(lines)
+
+
 def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -1265,6 +1359,101 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             mimetype="application/zip",
             as_attachment=True,
             download_name="training_data.zip",
+        )
+
+    @app.route("/api/training/apply-to-llm", methods=["POST"])
+    def api_apply_to_llm():
+        """Build a custom Ollama model from ground-truth corrections.
+
+        Constructs a Modelfile with a detailed SYSTEM prompt and few-shot
+        MESSAGE pairs derived from approved corrections, then POSTs it to
+        the Ollama ``/api/create`` endpoint.  On success, records the event
+        in ``training_runs`` and returns the new model name.
+        """
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            corrections = list_ground_truth_corrections(connection)
+        finally:
+            connection.close()
+
+        if not corrections:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "No ground-truth corrections found. "
+                            "Annotate some records first, then try again."
+                        )
+                    }
+                ),
+                400,
+            )
+
+        base_model = os.getenv("AI_MODEL", "moondream")
+        custom_model = "titles-custom"
+        modelfile = _build_llm_modelfile(corrections, base_model)
+
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        try:
+            resp = requests.post(
+                f"{endpoint}/api/create",
+                json={"name": custom_model, "modelfile": modelfile, "stream": False},
+                timeout=120,
+            )
+            resp.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "Ollama endpoint is unavailable. "
+                            "Ensure the AI service is running (COMPOSE_PROFILES=ai)."
+                        )
+                    }
+                ),
+                503,
+            )
+        except requests.exceptions.Timeout:
+            return (
+                jsonify({"error": "Ollama timed out while creating the custom model."}),
+                504,
+            )
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else "unknown"
+            return (
+                jsonify({"error": f"Ollama returned HTTP {status_code} while creating the model."}),
+                502,
+            )
+
+        unique_records = len({int(c["record_id"]) for c in corrections})
+        notes = (
+            f"LLM prompt-tuning: created '{custom_model}' "
+            f"from '{base_model}' with {len(corrections)} corrections "
+            f"across {unique_records} records"
+        )
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            run_id = insert_training_run(
+                connection, sample_count=unique_records, notes=notes
+            )
+        finally:
+            connection.close()
+
+        return jsonify(
+            {
+                "model": custom_model,
+                "base_model": base_model,
+                "corrections_used": len(corrections),
+                "records_used": unique_records,
+                "run_id": run_id,
+                "message": (
+                    f"Custom model '{custom_model}' created successfully from "
+                    f"{unique_records} annotated title records. "
+                    f"Set AI_MODEL={custom_model} in your .env and restart the stack to use it."
+                ),
+            }
         )
 
     # ── Maintenance endpoints ─────────────────────────────────────────────────

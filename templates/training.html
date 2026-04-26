@@ -40,7 +40,11 @@
   .btn-export { background: #15803d; color: white; }
   .btn-export:hover { background: #166534; }
   .btn-export:disabled { opacity: 0.6; cursor: default; }
+  .btn-apply { background: #1d4ed8; color: white; }
+  .btn-apply:hover { background: #1e40af; }
+  .btn-apply:disabled { opacity: 0.6; cursor: default; }
   #export-status { font-size: 0.85rem; font-weight: bold; }
+  #apply-status { font-size: 0.85rem; font-weight: bold; }
 
   /* ── Run history ─────────────────────────────────────────────────────── */
   .run-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -148,6 +152,26 @@
   </div>
 </div>
 
+<!-- ── Apply to AI Model ────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <h2>Apply to AI Model</h2>
+  <div class="export-section">
+    <p style="font-size:0.875rem;color:#444;">
+      Creates a custom Ollama model named <code>titles-custom</code> using all
+      ground-truth corrections. A detailed system prompt and few-shot examples
+      derived from your annotations are built into the model — no GPU or weight
+      changes required. After applying, update <code>AI_MODEL=titles-custom</code>
+      in your <code>.env</code> and restart the stack.
+    </p>
+    <div>
+      <button class="btn btn-apply" id="apply-btn" onclick="applyToLLM()">
+        🤖 Apply to AI Model
+      </button>
+    </div>
+    <div id="apply-status"></div>
+  </div>
+</div>
+
 <!-- ── Run history ──────────────────────────────────────────────────────── -->
 <div class="card">
   <h2>Export History</h2>
@@ -206,6 +230,32 @@ async function startExport() {
   } finally {
     btn.disabled = false;
     btn.textContent = '⬇ Export & Download ZIP';
+  }
+}
+
+async function applyToLLM() {
+  const btn = document.getElementById('apply-btn');
+  const status = document.getElementById('apply-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Creating model…';
+  status.textContent = '';
+
+  try {
+    const resp = await fetch('/api/training/apply-to-llm', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.style.color = '#991b1b';
+      status.textContent = '✖ ' + (data.error || 'Failed to create model.');
+      return;
+    }
+    status.style.color = '#15803d';
+    status.innerHTML =
+      `✔ Model <strong>${data.model}</strong> created from ` +
+      `${data.records_used} annotated records (${data.corrections_used} corrections). ` +
+      `Set <code>AI_MODEL=${data.model}</code> in your <code>.env</code> and restart the stack.`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🤖 Apply to AI Model';
   }
 }
 </script>
