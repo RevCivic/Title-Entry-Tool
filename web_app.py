@@ -736,6 +736,11 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         """Render the diagnostics page."""
         return render_template("diagnostics.html")
 
+    @app.route("/help")
+    def help_page():
+        """Render the help / how-to documentation page."""
+        return render_template("help.html")
+
     @app.route("/api/diagnostics/ai-progress")
     def api_ai_progress():
         """Return enriched AI status including pull-progress data from logs.
