@@ -13,6 +13,7 @@ from web_app import (
     _docker_client,
     _extract_text_from_image,
     _extract_text_from_pdf,
+    _get_active_model,
     _get_ai_pull_progress,
     _get_service_containers,
     _get_service_logs,
@@ -1244,6 +1245,7 @@ class ApplyToLLMTests(unittest.TestCase):
         data = json.loads(response.data)
         self.assertIn("error", data)
 
+    @mock.patch("web_app.upsert_model_definition")
     @mock.patch("web_app.insert_training_run", return_value=7)
     @mock.patch("web_app.requests.post")
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
@@ -1256,6 +1258,7 @@ class ApplyToLLMTests(unittest.TestCase):
         _corr_mock: mock.Mock,
         post_mock: mock.Mock,
         _run_mock: mock.Mock,
+        _upsert_mock: mock.Mock,
     ) -> None:
         conn_mock.return_value = mock.Mock()
         ollama_resp = mock.Mock()
@@ -1272,6 +1275,7 @@ class ApplyToLLMTests(unittest.TestCase):
         self.assertIn("run_id", data)
         self.assertEqual(7, data["run_id"])
 
+    @mock.patch("web_app.upsert_model_definition")
     @mock.patch("web_app.insert_training_run", return_value=1)
     @mock.patch("web_app.requests.post")
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
@@ -1284,6 +1288,7 @@ class ApplyToLLMTests(unittest.TestCase):
         _corr_mock: mock.Mock,
         post_mock: mock.Mock,
         _run_mock: mock.Mock,
+        _upsert_mock: mock.Mock,
     ) -> None:
         conn_mock.return_value = mock.Mock()
         ollama_resp = mock.Mock()
@@ -1342,6 +1347,7 @@ class ApplyToLLMTests(unittest.TestCase):
         data = json.loads(response.data)
         self.assertIn("error", data)
 
+    @mock.patch("web_app.upsert_model_definition")
     @mock.patch("web_app.insert_training_run", return_value=1)
     @mock.patch("web_app.requests.post")
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
@@ -1354,6 +1360,7 @@ class ApplyToLLMTests(unittest.TestCase):
         _corr_mock: mock.Mock,
         post_mock: mock.Mock,
         run_mock: mock.Mock,
+        _upsert_mock: mock.Mock,
     ) -> None:
         conn_mock.return_value = mock.Mock()
         ollama_resp = mock.Mock()
@@ -1385,6 +1392,7 @@ class ApplyToLLMTests(unittest.TestCase):
         self.assertIn("error", data)
         self.assertIn("LLM_BASE_MODEL", data["error"])
 
+    @mock.patch("web_app.upsert_model_definition")
     @mock.patch("web_app.insert_training_run", return_value=1)
     @mock.patch("web_app.requests.post")
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
@@ -1397,6 +1405,7 @@ class ApplyToLLMTests(unittest.TestCase):
         _corr_mock: mock.Mock,
         post_mock: mock.Mock,
         _run_mock: mock.Mock,
+        _upsert_mock: mock.Mock,
     ) -> None:
         """LLM_BASE_MODEL should be used in the ``from`` field of the payload."""
         conn_mock.return_value = mock.Mock()
@@ -1441,6 +1450,307 @@ class ApplyToLLMTests(unittest.TestCase):
         self.assertIn("model not found", data["error"])
 
 
+    @mock.patch("web_app.upsert_model_definition")
+    @mock.patch("web_app.insert_training_run", return_value=1)
+    @mock.patch("web_app.requests.post")
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_custom_model_name_accepted(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+        post_mock: mock.Mock,
+        _run_mock: mock.Mock,
+        upsert_mock: mock.Mock,
+    ) -> None:
+        """Submitting a custom model_name should create that named model."""
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        post_mock.return_value = ollama_resp
+
+        client = self._app().test_client()
+        response = client.post(
+            "/api/training/apply-to-llm",
+            json={"model_name": "my-model-v2", "description": "test"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("my-model-v2", data["model"])
+        # upsert_model_definition should have been called with the custom name.
+        upsert_mock.assert_called_once()
+        call_kwargs = upsert_mock.call_args[1] if upsert_mock.call_args[1] else {}
+        call_args   = upsert_mock.call_args[0]
+        model_arg   = call_kwargs.get("model_name") or call_args[1]
+        self.assertEqual("my-model-v2", model_arg)
+
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_invalid_model_name_returns_400(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.post(
+            "/api/training/apply-to-llm",
+            json={"model_name": "INVALID NAME!"},
+        )
+        self.assertEqual(400, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+        self.assertIn("Invalid model_name", data["error"])
+
+    @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_circular_base_blocked_for_any_custom_name(
+        self,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _corr_mock: mock.Mock,
+    ) -> None:
+        """Circular base guard should work for any model name, not just 'titles-custom'."""
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        with mock.patch.dict(os.environ, {"AI_MODEL": "my-custom"}, clear=False):
+            with mock.patch.dict(os.environ, {"LLM_BASE_MODEL": ""}, clear=False):
+                response = client.post(
+                    "/api/training/apply-to-llm",
+                    json={"model_name": "my-custom"},
+                )
+        self.assertEqual(400, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("LLM_BASE_MODEL", data["error"])
+
+
+class ActiveModelTests(unittest.TestCase):
+    """Tests for _get_active_model()."""
+
+    def setUp(self) -> None:
+        self._reset_cache()
+
+    def tearDown(self) -> None:
+        self._reset_cache()
+
+    def _reset_cache(self):
+        import web_app as _wa
+        _wa._ACTIVE_MODEL_CACHE["model"] = None
+        _wa._ACTIVE_MODEL_CACHE["checked_at"] = 0.0
+
+    @mock.patch("web_app.create_connection_from_env")
+    def test_get_active_model_reads_from_db(self, conn_mock: mock.Mock) -> None:
+        conn = mock.Mock()
+        conn_mock.return_value = conn
+
+        with mock.patch("web_app.get_app_setting", return_value="titles-custom"):
+            result = _get_active_model()
+
+        self.assertEqual("titles-custom", result)
+
+    @mock.patch("web_app.create_connection_from_env")
+    def test_get_active_model_falls_back_to_env_var(self, conn_mock: mock.Mock) -> None:
+        conn = mock.Mock()
+        conn_mock.return_value = conn
+
+        with mock.patch("web_app.get_app_setting", return_value=None):
+            with mock.patch.dict(os.environ, {"AI_MODEL": "llava"}, clear=False):
+                result = _get_active_model()
+
+        self.assertEqual("llava", result)
+
+    @mock.patch("web_app.create_connection_from_env", side_effect=Exception("DB down"))
+    def test_get_active_model_falls_back_when_db_unavailable(self, _conn_mock: mock.Mock) -> None:
+        with mock.patch.dict(os.environ, {"AI_MODEL": "moondream"}, clear=False):
+            result = _get_active_model()
+        self.assertEqual("moondream", result)
+
+    @mock.patch("web_app.create_connection_from_env")
+    def test_get_active_model_uses_cache(self, conn_mock: mock.Mock) -> None:
+        import web_app as _wa
+        import time
+        _wa._ACTIVE_MODEL_CACHE["model"] = "cached-model"
+        _wa._ACTIVE_MODEL_CACHE["checked_at"] = time.monotonic()
+
+        result = _get_active_model()
+
+        self.assertEqual("cached-model", result)
+        conn_mock.assert_not_called()
+
+
+class ModelEndpointTests(unittest.TestCase):
+    """Tests for GET /api/models, POST /api/models/active, DELETE /api/models/<name>."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    # ── GET /api/models ────────────────────────────────────────────────────
+
+    @mock.patch("web_app.list_model_definitions")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    @mock.patch("web_app.requests.get")
+    @mock.patch("web_app._get_active_model", return_value="moondream")
+    def test_get_models_returns_model_list(
+        self,
+        _active_mock: mock.Mock,
+        get_mock: mock.Mock,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        model_defs_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        ollama_resp.json.return_value = {
+            "models": [
+                {"name": "moondream", "size": 1000000},
+                {"name": "titles-custom", "size": 2000000},
+            ]
+        }
+        get_mock.return_value = ollama_resp
+        model_defs_mock.return_value = [
+            {
+                "model_name": "titles-custom",
+                "base_model": "moondream",
+                "description": "v1",
+                "corrections_used": 5,
+            }
+        ]
+
+        client = self._app().test_client()
+        response = client.get("/api/models")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("moondream", data["active"])
+        self.assertEqual(2, len(data["models"]))
+        custom = next(m for m in data["models"] if m["name"] == "titles-custom")
+        self.assertTrue(custom["custom"])
+        self.assertEqual("moondream", custom["base_model"])
+        base = next(m for m in data["models"] if m["name"] == "moondream")
+        self.assertFalse(base["custom"])
+
+    @mock.patch("web_app.list_model_definitions", return_value=[])
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    @mock.patch("web_app.requests.get", side_effect=Exception("Ollama down"))
+    @mock.patch("web_app._get_active_model", return_value="moondream")
+    def test_get_models_returns_empty_when_ollama_down(
+        self,
+        _active_mock: mock.Mock,
+        _get_mock: mock.Mock,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _defs_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.Mock()
+        client = self._app().test_client()
+        response = client.get("/api/models")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual([], data["models"])
+
+    # ── POST /api/models/active ────────────────────────────────────────────
+
+    @mock.patch("web_app._set_active_model")
+    @mock.patch("web_app.requests.get")
+    def test_set_active_model_success(
+        self, get_mock: mock.Mock, set_mock: mock.Mock
+    ) -> None:
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        ollama_resp.json.return_value = {"models": [{"name": "titles-custom"}]}
+        get_mock.return_value = ollama_resp
+
+        client = self._app().test_client()
+        response = client.post(
+            "/api/models/active",
+            json={"model": "titles-custom"},
+        )
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("titles-custom", data["active"])
+        set_mock.assert_called_once_with("titles-custom")
+
+    @mock.patch("web_app.requests.get")
+    def test_set_active_model_rejects_unknown_model(self, get_mock: mock.Mock) -> None:
+        ollama_resp = mock.Mock()
+        ollama_resp.raise_for_status = mock.Mock()
+        ollama_resp.json.return_value = {"models": [{"name": "moondream"}]}
+        get_mock.return_value = ollama_resp
+
+        client = self._app().test_client()
+        response = client.post(
+            "/api/models/active",
+            json={"model": "unknown-model"},
+        )
+        self.assertEqual(400, response.status_code)
+        data = json.loads(response.data)
+        self.assertIn("error", data)
+
+    @mock.patch(
+        "web_app.requests.get",
+        side_effect=__import__("requests").exceptions.RequestException("refused"),
+    )
+    def test_set_active_model_returns_503_when_ollama_down(self, _get_mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        response = client.post(
+            "/api/models/active",
+            json={"model": "moondream"},
+        )
+        self.assertEqual(503, response.status_code)
+
+    def test_set_active_model_returns_400_for_missing_field(self) -> None:
+        client = self._app().test_client()
+        response = client.post("/api/models/active", json={})
+        self.assertEqual(400, response.status_code)
+
+    # ── DELETE /api/models/<name> ──────────────────────────────────────────
+
+    @mock.patch("web_app._get_active_model", return_value="moondream")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    @mock.patch("web_app.requests.delete")
+    def test_delete_model_success(
+        self,
+        del_mock: mock.Mock,
+        conn_mock: mock.Mock,
+        _init_mock: mock.Mock,
+        _active_mock: mock.Mock,
+    ) -> None:
+        conn_mock.return_value = mock.MagicMock()
+        del_resp = mock.Mock()
+        del_resp.raise_for_status = mock.Mock()
+        del_mock.return_value = del_resp
+
+        client = self._app().test_client()
+        response = client.delete("/api/models/titles-custom")
+        self.assertEqual(200, response.status_code)
+        data = json.loads(response.data)
+        self.assertEqual("titles-custom", data["deleted"])
+
+    @mock.patch(
+        "web_app.requests.delete",
+        side_effect=__import__("requests").exceptions.ConnectionError("refused"),
+    )
+    def test_delete_model_returns_503_when_ollama_down(self, _del_mock: mock.Mock) -> None:
+        client = self._app().test_client()
+        response = client.delete("/api/models/titles-custom")
+        self.assertEqual(503, response.status_code)
+
+    def test_delete_model_returns_400_for_invalid_name(self) -> None:
+        client = self._app().test_client()
+        response = client.delete("/api/models/INVALID NAME!")
+        self.assertEqual(400, response.status_code)
+
+
 if __name__ == "__main__":
     unittest.main()
-

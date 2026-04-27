@@ -1456,11 +1456,41 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     def api_apply_to_llm():
         """Build a custom Ollama model from ground-truth corrections.
 
+        Accepts an optional ``model_name`` field (JSON or form data; defaults to
+        ``"titles-custom"``) so multiple named custom models can coexist.
+        Accepts an optional ``description`` field stored in ``model_definitions``.
+
         Constructs a Modelfile with a detailed SYSTEM prompt and few-shot
         MESSAGE pairs derived from approved corrections, then POSTs it to
-        the Ollama ``/api/create`` endpoint.  On success, records the event
-        in ``training_runs`` and returns the new model name.
+        the Ollama ``/api/create`` endpoint.  On success, records the model in
+        ``model_definitions``, records the event in ``training_runs``, and
+        returns the new model name.
         """
+        # Support both JSON body and form-encoded body.
+        if request.is_json:
+            body = request.get_json(silent=True) or {}
+        else:
+            body = request.form
+
+        raw_model_name = (body.get("model_name") or "titles-custom").strip()
+        description = (body.get("description") or "").strip() or None
+
+        # Validate: only lowercase alphanumerics, hyphens, underscores.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", raw_model_name):
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "Invalid model_name. "
+                            "Use only lowercase letters, digits, hyphens, and underscores, "
+                            "starting with a letter or digit."
+                        )
+                    }
+                ),
+                400,
+            )
+        custom_model = raw_model_name
+
         connection = create_connection_from_env()
         try:
             initialize_database(connection)
@@ -1481,11 +1511,10 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 400,
             )
 
-        custom_model = "titles-custom"
         # LLM_BASE_MODEL explicitly sets the Modelfile FROM base.  Fall back to
-        # AI_MODEL, but guard against the circular case where AI_MODEL has
-        # already been set to 'titles-custom' — using the custom model as its
-        # own base causes Ollama to return HTTP 400.
+        # AI_MODEL, but guard against the circular case where the base model would
+        # equal the target model name — using a model as its own base causes
+        # Ollama to return HTTP 400.
         base_model = (os.getenv("LLM_BASE_MODEL") or "").strip() or os.getenv("AI_MODEL", "moondream")
         if base_model == custom_model:
             return (
@@ -1536,8 +1565,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             raw_error = ""
             if exc.response is not None:
                 try:
-                    body = exc.response.json()
-                    raw_error = body.get("error") or str(body)
+                    body_json = exc.response.json()
+                    raw_error = body_json.get("error") or str(body_json)
                     detail = ": " + raw_error
                 except Exception:
                     raw_error = exc.response.text or ""
@@ -1574,6 +1603,13 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             run_id = insert_training_run(
                 connection, sample_count=unique_records, notes=notes
             )
+            upsert_model_definition(
+                connection,
+                model_name=custom_model,
+                base_model=base_model,
+                description=description,
+                corrections_used=len(corrections),
+            )
         finally:
             connection.close()
 
@@ -1586,11 +1622,164 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 "run_id": run_id,
                 "message": (
                     f"Custom model '{custom_model}' created successfully from "
-                    f"{unique_records} annotated title records. "
-                    f"Set AI_MODEL={custom_model} in your .env and restart the stack to use it."
+                    f"{unique_records} annotated title records."
                 ),
             }
         )
+
+    # ── Model management endpoints ────────────────────────────────────────────
+
+    @app.route("/api/models")
+    def api_models():
+        """List available Ollama models and identify which are custom-built.
+
+        Response JSON:
+            {
+                "active": "<model-name>",
+                "models": [
+                    {
+                        "name":        "<model-name>",
+                        "size":        <bytes-int-or-null>,
+                        "custom":      <bool>,
+                        "description": "<str-or-null>",
+                        "base_model":  "<str-or-null>",
+                        "corrections_used": <int-or-null>
+                    },
+                    …
+                ]
+            }
+        """
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        ollama_models: List[Dict[str, Any]] = []
+        try:
+            resp = requests.get(f"{endpoint}/api/tags", timeout=5)
+            resp.raise_for_status()
+            ollama_models = resp.json().get("models", [])
+        except Exception:
+            pass
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            custom_defs = list_model_definitions(connection)
+        finally:
+            connection.close()
+
+        custom_by_name = {d["model_name"]: d for d in custom_defs}
+        active = _get_active_model()
+
+        models_out = []
+        for m in ollama_models:
+            name = m.get("name", "")
+            defn = custom_by_name.get(name)
+            models_out.append(
+                {
+                    "name": name,
+                    "size": m.get("size"),
+                    "custom": defn is not None,
+                    "description": defn["description"] if defn else None,
+                    "base_model": defn["base_model"] if defn else None,
+                    "corrections_used": defn["corrections_used"] if defn else None,
+                }
+            )
+
+        return jsonify({"active": active, "models": models_out})
+
+    @app.route("/api/models/active", methods=["POST"])
+    def api_set_active_model():
+        """Set the active AI model used for extraction.
+
+        Accepts JSON body ``{ "model": "<name>" }``.
+        Validates the model exists in Ollama before switching.
+        """
+        data = request.get_json(silent=True) or {}
+        model_name = (data.get("model") or "").strip()
+        if not model_name:
+            return jsonify({"error": "Missing 'model' field."}), 400
+
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        try:
+            resp = requests.get(f"{endpoint}/api/tags", timeout=5)
+            resp.raise_for_status()
+            available = [m.get("name", "") for m in resp.json().get("models", [])]
+            if model_name not in available:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Model '{model_name}' is not available in Ollama. "
+                                "Pull or build it first."
+                            )
+                        }
+                    ),
+                    400,
+                )
+        except requests.exceptions.RequestException:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "Ollama endpoint is unavailable. "
+                            "Cannot verify model availability."
+                        )
+                    }
+                ),
+                503,
+            )
+
+        _set_active_model(model_name)
+        # Invalidate the AI status cache so next poll reflects the new model.
+        _AI_STATUS_CACHE["checked_at"] = 0.0
+        return jsonify({"active": model_name})
+
+    @app.route("/api/models/<model_name>", methods=["DELETE"])
+    def api_delete_model(model_name: str):
+        """Delete an Ollama model and remove it from model_definitions.
+
+        If the deleted model was the active model, resets active model to the
+        ``LLM_BASE_MODEL`` env var or ``moondream``.
+        """
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_:.-]*", model_name):
+            return jsonify({"error": "Invalid model name."}), 400
+
+        endpoint = os.getenv("AI_ENDPOINT", "http://ollama:11434")
+        try:
+            resp = requests.delete(
+                f"{endpoint}/api/delete",
+                json={"name": model_name},
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            return (
+                jsonify({"error": "Ollama endpoint is unavailable."}),
+                503,
+            )
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else "unknown"
+            return jsonify({"error": f"Ollama returned HTTP {status_code}."}), 502
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM model_definitions WHERE model_name = %s",
+                    (model_name,),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+        # If the deleted model was active, reset to base model.
+        if _get_active_model() == model_name:
+            fallback = (os.getenv("LLM_BASE_MODEL") or "").strip() or os.getenv("AI_MODEL", "moondream")
+            if fallback == model_name:
+                fallback = "moondream"
+            _set_active_model(fallback)
+            _AI_STATUS_CACHE["checked_at"] = 0.0
+
+        return jsonify({"deleted": model_name})
 
     # ── Maintenance endpoints ─────────────────────────────────────────────────
 
