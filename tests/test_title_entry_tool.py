@@ -8,6 +8,7 @@ from unittest import mock
 from title_entry_tool import (
     export_validated_to_csv,
     get_annotation_queue,
+    get_app_setting,
     get_record_by_id,
     get_training_stats,
     initialize_database,
@@ -15,20 +16,28 @@ from title_entry_tool import (
     insert_title_back_record,
     insert_title_record,
     insert_training_run,
+    list_model_definitions,
     list_training_runs,
+    set_app_setting,
     update_title_record_fields,
+    upsert_model_definition,
     validate_record,
 )
 
 
-def _make_connection(cursor_rows=None, fetchone_return=None):
+def _make_connection(cursor_rows=None, fetchone_return=None, fetchone_explicit_none=False):
     """Return a mock psycopg2-style connection/cursor pair.
 
-    cursor_rows     – list of dicts returned by cursor.fetchall()
-    fetchone_return – tuple returned by cursor.fetchone()
+    cursor_rows              – list of dicts returned by cursor.fetchall()
+    fetchone_return          – tuple returned by cursor.fetchone()
+    fetchone_explicit_none   – if True, configure fetchone() to return None
+                               (overrides the default (1,) fallback)
     """
     cursor = mock.MagicMock()
-    cursor.fetchone.return_value = fetchone_return or (1,)
+    if fetchone_explicit_none:
+        cursor.fetchone.return_value = None
+    else:
+        cursor.fetchone.return_value = fetchone_return or (1,)
     cursor.fetchall.return_value = cursor_rows or []
 
     cm = mock.MagicMock()
@@ -187,6 +196,8 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertIn("corrections", all_sql)
         self.assertIn("title_back_records", all_sql)
         self.assertIn("training_runs", all_sql)
+        self.assertIn("app_settings", all_sql)
+        self.assertIn("model_definitions", all_sql)
 
     def test_update_title_record_fields_builds_update_sql(self) -> None:
         connection, cursor = _make_connection(fetchone_return=("TITLE123", "1HGCM82633A004352", 2003))
@@ -262,6 +273,88 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertIn("by_state", stats)
         self.assertIn("coverage", stats)
         self.assertEqual(10, stats["coverage"]["total_records"])
+
+
+class AppSettingsTests(unittest.TestCase):
+    """Tests for get_app_setting / set_app_setting."""
+
+    def test_get_app_setting_returns_value_when_row_exists(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=("moondream",))
+        result = get_app_setting(connection, "active_ai_model")
+        self.assertEqual("moondream", result)
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("app_settings", sql)
+
+    def test_get_app_setting_returns_default_when_not_found(self) -> None:
+        connection, cursor = _make_connection(fetchone_explicit_none=True)
+        result = get_app_setting(connection, "active_ai_model", default="llava")
+        self.assertEqual("llava", result)
+
+    def test_get_app_setting_returns_none_default_when_unset(self) -> None:
+        connection, cursor = _make_connection(fetchone_explicit_none=True)
+        result = get_app_setting(connection, "missing_key")
+        self.assertIsNone(result)
+
+    def test_set_app_setting_executes_upsert(self) -> None:
+        connection, cursor = _make_connection()
+        set_app_setting(connection, "active_ai_model", "titles-custom")
+        connection.commit.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("app_settings", sql)
+        self.assertIn("ON CONFLICT", sql)
+        params = cursor.execute.call_args[0][1]
+        self.assertEqual("active_ai_model", params[0])
+        self.assertEqual("titles-custom", params[1])
+
+
+class ModelDefinitionsTests(unittest.TestCase):
+    """Tests for upsert_model_definition / list_model_definitions."""
+
+    def test_upsert_model_definition_executes_insert(self) -> None:
+        connection, cursor = _make_connection()
+        upsert_model_definition(
+            connection,
+            model_name="titles-custom",
+            base_model="moondream",
+            description="test model",
+            corrections_used=5,
+        )
+        connection.commit.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("model_definitions", sql)
+        self.assertIn("ON CONFLICT", sql)
+        params = cursor.execute.call_args[0][1]
+        self.assertEqual("titles-custom", params[0])
+        self.assertEqual("moondream", params[1])
+        self.assertEqual("test model", params[2])
+        self.assertEqual(5, params[3])
+
+    def test_upsert_model_definition_uses_none_description_when_absent(self) -> None:
+        connection, cursor = _make_connection()
+        upsert_model_definition(
+            connection,
+            model_name="titles-v2",
+            base_model="llava",
+        )
+        params = cursor.execute.call_args[0][1]
+        self.assertIsNone(params[2])   # description
+        self.assertEqual(0, params[3]) # corrections_used default
+
+    def test_list_model_definitions_returns_rows(self) -> None:
+        fake_rows = [
+            {
+                "id": 1,
+                "model_name": "titles-custom",
+                "base_model": "moondream",
+                "description": None,
+                "corrections_used": 10,
+                "created_at": "2024-01-01",
+            }
+        ]
+        connection, _ = _make_connection(cursor_rows=fake_rows)
+        rows = list_model_definitions(connection)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("titles-custom", rows[0]["model_name"])
 
 
 if __name__ == "__main__":

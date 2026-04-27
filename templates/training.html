@@ -33,7 +33,9 @@
   /* ── Export card ─────────────────────────────────────────────────────── */
   .export-section { display: flex; flex-direction: column; gap: 0.75rem; }
   .export-section textarea { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #ccc;
-                              border-radius: 4px; font-size: 0.875rem; resize: vertical; }
+                              border-radius: 4px; font-size: 0.875rem; resize: vertical; box-sizing: border-box; }
+  .export-section input[type=text] { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #ccc;
+                                      border-radius: 4px; font-size: 0.875rem; box-sizing: border-box; }
   .btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 1.1rem;
          border: none; border-radius: 4px; font-size: 0.9rem; font-weight: bold;
          cursor: pointer; }
@@ -43,8 +45,28 @@
   .btn-apply { background: #1d4ed8; color: white; }
   .btn-apply:hover { background: #1e40af; }
   .btn-apply:disabled { opacity: 0.6; cursor: default; }
+  .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: bold; border: none;
+             border-radius: 4px; cursor: pointer; }
+  .btn-use { background: #15803d; color: white; }
+  .btn-use:hover { background: #166534; }
+  .btn-use.active-model { background: #1d4ed8; }
+  .btn-rebuild { background: #d97706; color: white; }
+  .btn-rebuild:hover { background: #b45309; }
+  .btn-danger { background: #991b1b; color: white; }
+  .btn-danger:hover { background: #7f1d1d; }
   #export-status { font-size: 0.85rem; font-weight: bold; }
   #apply-status { font-size: 0.85rem; font-weight: bold; }
+
+  /* ── Model management table ──────────────────────────────────────────── */
+  .model-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .model-table th { background: #003366; color: white; padding: 0.5rem 0.8rem; text-align: left; }
+  .model-table td { padding: 0.45rem 0.8rem; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+  .model-table tr:last-child td { border-bottom: none; }
+  .model-table tr.active-row { background: #eff6ff; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.75rem; font-weight: bold; }
+  .badge-custom { background: #dbeafe; color: #1e40af; }
+  .badge-base { background: #f0fdf4; color: #166534; }
+  .badge-active { background: #1d4ed8; color: white; }
 
   /* ── Run history ─────────────────────────────────────────────────────── */
   .run-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
@@ -152,22 +174,53 @@
   </div>
 </div>
 
+<!-- ── Model Management ──────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <h2>Model Management</h2>
+  <div id="model-mgmt-loading" style="color:#888;font-size:0.875rem;">Loading models…</div>
+  <div id="model-mgmt-error" style="color:#991b1b;font-size:0.875rem;display:none;"></div>
+  <div id="model-mgmt-content" style="display:none;">
+    <p id="active-model-summary" style="font-size:0.875rem;margin:0 0 0.75rem;"></p>
+    <table class="model-table" id="model-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="model-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ── Apply to AI Model ────────────────────────────────────────────────── -->
 <div class="card" style="margin-bottom:1.5rem;">
   <h2>Apply to AI Model</h2>
   <div class="export-section">
     <p style="font-size:0.875rem;color:#444;">
-      Creates a custom Ollama model named <code>titles-custom</code> using all
-      ground-truth corrections. A detailed system prompt and few-shot examples
-      derived from your annotations are built into the model — no GPU or weight
-      changes required. After applying, update <code>AI_MODEL=titles-custom</code>
-      in your <code>.env</code> and restart the stack.
+      Creates a custom Ollama model using all ground-truth corrections.
+      A detailed system prompt and few-shot examples derived from your annotations
+      are built into the model — no GPU or weight changes required.
     </p>
-    <p style="font-size:0.875rem;color:#444;">
-      <strong>Note:</strong> if you have already set <code>AI_MODEL=titles-custom</code>,
-      also add <code>LLM_BASE_MODEL=&lt;your-base-model&gt;</code>
-      (e.g. <code>LLM_BASE_MODEL=moondream</code>) so the Modelfile can reference
-      the underlying base model.
+    <label style="font-size:0.875rem;font-weight:600;">
+      Model Name:
+      <input type="text" id="apply-model-name" value="titles-custom"
+             pattern="[a-z0-9][a-z0-9_\-]*" required
+             style="margin-top:0.25rem;"
+             placeholder="e.g. titles-custom" />
+    </label>
+    <label style="font-size:0.875rem;font-weight:600;">
+      Description (optional):
+      <textarea id="apply-description" rows="2"
+                placeholder="e.g. moondream fine-tune v1 — exported 2024-06-01"
+                style="margin-top:0.25rem;"></textarea>
+    </label>
+    <p style="font-size:0.8rem;color:#666;margin:0;">
+      <strong>Note:</strong> if <code>AI_MODEL</code> already points at this custom model,
+      add <code>LLM_BASE_MODEL=&lt;your-base-model&gt;</code> (e.g. <code>moondream</code>)
+      to your <code>.env</code>.
     </p>
     <div>
       <button class="btn btn-apply" id="apply-btn" onclick="applyToLLM()">
@@ -203,6 +256,119 @@
 </div>
 
 <script>
+/* ── Model Management ───────────────────────────────────────────────────── */
+
+async function loadModels() {
+  const loading = document.getElementById('model-mgmt-loading');
+  const errEl   = document.getElementById('model-mgmt-error');
+  const content = document.getElementById('model-mgmt-content');
+  const summary = document.getElementById('active-model-summary');
+  const tbody   = document.getElementById('model-table-body');
+
+  try {
+    const resp = await fetch('/api/models');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+
+    const active = data.active || '';
+    summary.innerHTML =
+      'Active model: <strong>' + escHtml(active) + '</strong>' +
+      (data.models.find(m => m.name === active && m.custom)
+        ? ' <span class="badge badge-custom">custom</span>'
+        : ' <span class="badge badge-base">base</span>');
+
+    tbody.innerHTML = '';
+    if (data.models.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#999;">No models found in Ollama.</td></tr>';
+    } else {
+      for (const m of data.models) {
+        const isActive = m.name === active;
+        const tr = document.createElement('tr');
+        if (isActive) tr.classList.add('active-row');
+
+        const nameTd = document.createElement('td');
+        nameTd.innerHTML = escHtml(m.name) +
+          (isActive ? ' <span class="badge badge-active">active</span>' : '');
+
+        const typeTd = document.createElement('td');
+        typeTd.innerHTML = m.custom
+          ? '<span class="badge badge-custom">custom</span>'
+          : '<span class="badge badge-base">base</span>';
+
+        const descTd = document.createElement('td');
+        descTd.style.color = '#555';
+        descTd.textContent = m.description || (m.custom && m.base_model ? 'base: ' + m.base_model : '—');
+
+        const actTd = document.createElement('td');
+        actTd.style.display = 'flex';
+        actTd.style.gap = '0.4rem';
+        actTd.style.flexWrap = 'wrap';
+
+        if (!isActive) {
+          const useBtn = document.createElement('button');
+          useBtn.className = 'btn-sm btn-use';
+          useBtn.textContent = '✔ Use This Model';
+          useBtn.onclick = () => setActiveModel(m.name);
+          actTd.appendChild(useBtn);
+        }
+
+        if (m.custom) {
+          const rebuildBtn = document.createElement('button');
+          rebuildBtn.className = 'btn-sm btn-rebuild';
+          rebuildBtn.textContent = '🔄 Rebuild';
+          rebuildBtn.onclick = () => prefillApplyForm(m.name, m.description || '');
+          actTd.appendChild(rebuildBtn);
+        }
+
+        tr.appendChild(nameTd);
+        tr.appendChild(typeTd);
+        tr.appendChild(descTd);
+        tr.appendChild(actTd);
+        tbody.appendChild(tr);
+      }
+    }
+
+    loading.style.display = 'none';
+    errEl.style.display   = 'none';
+    content.style.display = 'block';
+  } catch (e) {
+    loading.style.display = 'none';
+    errEl.textContent = 'Could not load model list: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function setActiveModel(name) {
+  try {
+    const resp = await fetch('/api/models/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: name }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('Could not switch model: ' + (data.error || resp.status));
+      return;
+    }
+    await loadModels();
+  } catch (e) {
+    alert('Error switching model: ' + e.message);
+  }
+}
+
+function prefillApplyForm(name, description) {
+  document.getElementById('apply-model-name').value = name;
+  document.getElementById('apply-description').value = description;
+  document.getElementById('apply-model-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+/* ── Export ─────────────────────────────────────────────────────────────── */
 async function startExport() {
   const btn = document.getElementById('export-btn');
   const status = document.getElementById('export-status');
@@ -239,15 +405,30 @@ async function startExport() {
   }
 }
 
+/* ── Apply to AI Model ──────────────────────────────────────────────────── */
 async function applyToLLM() {
-  const btn = document.getElementById('apply-btn');
+  const btn    = document.getElementById('apply-btn');
   const status = document.getElementById('apply-status');
+  const modelNameInput = document.getElementById('apply-model-name');
+  const descInput      = document.getElementById('apply-description');
+
+  const modelName = modelNameInput.value.trim();
+  if (!modelName || !/^[a-z0-9][a-z0-9_-]*$/.test(modelName)) {
+    status.style.color = '#991b1b';
+    status.textContent = '✖ Invalid model name. Use only lowercase letters, digits, hyphens, and underscores.';
+    return;
+  }
+
   btn.disabled = true;
   btn.textContent = '⏳ Creating model…';
   status.textContent = '';
 
   try {
-    const resp = await fetch('/api/training/apply-to-llm', { method: 'POST' });
+    const resp = await fetch('/api/training/apply-to-llm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_name: modelName, description: descInput.value.trim() }),
+    });
     const data = await resp.json();
     if (!resp.ok) {
       status.style.color = '#991b1b';
@@ -255,15 +436,26 @@ async function applyToLLM() {
       return;
     }
     status.style.color = '#15803d';
+    const safeModel = escHtml(data.model);
+    const setBtn = document.createElement('button');
+    setBtn.className = 'btn-sm btn-use';
+    setBtn.style.marginLeft = '0.5rem';
+    setBtn.textContent = '✔ Set as Active Model';
+    setBtn.dataset.model = data.model;
+    setBtn.addEventListener('click', () => setActiveModel(setBtn.dataset.model).then(() => loadModels()));
     status.innerHTML =
-      `✔ Model <strong>${data.model}</strong> created from ` +
-      `${data.records_used} annotated records (${data.corrections_used} corrections). ` +
-      `Set <code>AI_MODEL=${data.model}</code> in your <code>.env</code> and restart the stack.`;
+      `✔ Model <strong>${safeModel}</strong> created from ` +
+      `${data.records_used} annotated records (${data.corrections_used} corrections). `;
+    status.appendChild(setBtn);
+    await loadModels();
   } finally {
     btn.disabled = false;
     btn.textContent = '🤖 Apply to AI Model';
   }
 }
+
+/* ── Bootstrap ──────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', loadModels);
 </script>
 </body>
 </html>

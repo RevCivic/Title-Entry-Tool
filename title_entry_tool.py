@@ -174,6 +174,33 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             )
             """
         )
+
+        # App settings – generic key/value store for application configuration.
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        # Model definitions – tracks custom models built within the app.
+        # Model weights are stored in the ollama_data volume; this table records
+        # the metadata so models can be identified and rebuilt across redeployments.
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS model_definitions (
+                id SERIAL PRIMARY KEY,
+                model_name TEXT UNIQUE NOT NULL,
+                base_model TEXT NOT NULL,
+                description TEXT,
+                corrections_used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
     connection.commit()
 
 
@@ -723,6 +750,80 @@ def list_training_runs(
     """Return all training runs, newest first."""
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute("SELECT * FROM training_runs ORDER BY id DESC")
+        return [dict(r) for r in cursor.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# App settings
+# ---------------------------------------------------------------------------
+
+
+def get_app_setting(
+    connection: psycopg2.extensions.connection,
+    key: str,
+    default: Optional[str] = None,
+) -> Optional[str]:
+    """Return the value of an application setting, or *default* when not set."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+        row = cursor.fetchone()
+    return str(row[0]) if row and row[0] is not None else default
+
+
+def set_app_setting(
+    connection: psycopg2.extensions.connection,
+    key: str,
+    value: str,
+) -> None:
+    """Upsert an application setting."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value,
+                    updated_at = EXCLUDED.updated_at
+            """,
+            (key, value, datetime.utcnow().isoformat()),
+        )
+    connection.commit()
+
+
+# ---------------------------------------------------------------------------
+# Model definitions
+# ---------------------------------------------------------------------------
+
+
+def upsert_model_definition(
+    connection: psycopg2.extensions.connection,
+    model_name: str,
+    base_model: str,
+    description: Optional[str] = None,
+    corrections_used: int = 0,
+) -> None:
+    """Insert or update a custom model definition record."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO model_definitions (model_name, base_model, description, corrections_used, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (model_name) DO UPDATE
+                SET base_model = EXCLUDED.base_model,
+                    description = EXCLUDED.description,
+                    corrections_used = EXCLUDED.corrections_used
+            """,
+            (model_name, base_model, description, corrections_used, datetime.utcnow().isoformat()),
+        )
+    connection.commit()
+
+
+def list_model_definitions(
+    connection: psycopg2.extensions.connection,
+) -> List[Dict[str, Any]]:
+    """Return all custom model definitions, newest first."""
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute("SELECT * FROM model_definitions ORDER BY id DESC")
         return [dict(r) for r in cursor.fetchall()]
 
 
