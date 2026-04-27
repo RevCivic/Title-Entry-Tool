@@ -436,12 +436,17 @@ async function applyToLLM() {
       return;
     }
     status.style.color = '#15803d';
+    const safeModel = escHtml(data.model);
+    const setBtn = document.createElement('button');
+    setBtn.className = 'btn-sm btn-use';
+    setBtn.style.marginLeft = '0.5rem';
+    setBtn.textContent = '✔ Set as Active Model';
+    setBtn.dataset.model = data.model;
+    setBtn.addEventListener('click', () => setActiveModel(setBtn.dataset.model).then(() => loadModels()));
     status.innerHTML =
-      `✔ Model <strong>${escHtml(data.model)}</strong> created from ` +
-      `${data.records_used} annotated records (${data.corrections_used} corrections). ` +
-      `<button class="btn-sm btn-use" style="margin-left:0.5rem;" ` +
-      `onclick="setActiveModel('${escHtml(data.model)}').then(() => loadModels())">` +
-      `✔ Set as Active Model</button>`;
+      `✔ Model <strong>${safeModel}</strong> created from ` +
+      `${data.records_used} annotated records (${data.corrections_used} corrections). `;
+    status.appendChild(setBtn);
     await loadModels();
   } finally {
     btn.disabled = false;

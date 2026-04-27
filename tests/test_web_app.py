@@ -1482,9 +1482,9 @@ class ApplyToLLMTests(unittest.TestCase):
         self.assertEqual("my-model-v2", data["model"])
         # upsert_model_definition should have been called with the custom name.
         upsert_mock.assert_called_once()
-        call_kwargs = upsert_mock.call_args[1] if upsert_mock.call_args[1] else {}
-        call_args   = upsert_mock.call_args[0]
-        model_arg   = call_kwargs.get("model_name") or call_args[1]
+        _call_args, _call_kwargs = upsert_mock.call_args
+        # model_name is passed as the second positional arg or as a keyword arg.
+        model_arg = _call_kwargs.get("model_name") or (_call_args[1] if len(_call_args) > 1 else None)
         self.assertEqual("my-model-v2", model_arg)
 
     @mock.patch("web_app.list_ground_truth_corrections", return_value=_SAMPLE_CORRECTIONS)

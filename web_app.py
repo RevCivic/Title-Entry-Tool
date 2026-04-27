@@ -1736,9 +1736,14 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     def api_delete_model(model_name: str):
         """Delete an Ollama model and remove it from model_definitions.
 
+        The model_name pattern is intentionally broader than the POST /api/models/active
+        pattern — Ollama identifies models using an optional tag suffix
+        (e.g. ``moondream:latest``), so colons and periods must be accepted here.
+
         If the deleted model was the active model, resets active model to the
         ``LLM_BASE_MODEL`` env var or ``moondream``.
         """
+        # Allows Ollama's name:tag format (e.g. "moondream:latest").
         if not re.fullmatch(r"[a-z0-9][a-z0-9_:.-]*", model_name):
             return jsonify({"error": "Invalid model name."}), 400
 
