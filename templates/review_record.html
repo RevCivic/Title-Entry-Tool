@@ -80,6 +80,7 @@
   <a href="/review">⬅ Back to List</a>
   <a href="/annotate">🔍 Annotation Queue</a>
   <a href="/training">🏭 Training</a>
+  <a href="/layout-editor{% if record.state %}?state={{ record.state }}{% endif %}">🗺️ Layout Editor</a>
   <a href="/api/generate-pdf/{{ record.id }}">⬇ Download PDF</a>
   <a href="/titles/{{ record.id }}/back">🔄 Back of Title</a>
   <a href="/help">❓ Help</a>

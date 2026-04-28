@@ -57,6 +57,24 @@ _TEMPLATE_DIR = Path(__file__).parent / "state_templates"
 _template_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 
+def invalidate_template_cache(state: Optional[str] = None) -> None:
+    """Remove a state template entry from the in-process cache.
+
+    Call this whenever a template file is written so that the next extraction
+    request picks up the updated layout.
+
+    Parameters
+    ----------
+    state:
+        Two-letter state abbreviation whose cache entry should be evicted.
+        When *None* (or omitted) the entire cache is cleared.
+    """
+    if state is None:
+        _template_cache.clear()
+    else:
+        _template_cache.pop(state.upper(), None)
+
+
 def _load_state_template(state: Optional[str]) -> Optional[Dict[str, Any]]:
     """Return the state layout template dict, or None when unavailable."""
     if not state:

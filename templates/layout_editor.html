@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>State Layout Editor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #f5f7fa; font-size: 0.9rem; color: #222; }
+  h1 { color: #003366; font-size: 1.4rem; margin-bottom: 0.75rem; }
+  h2 { color: #003366; font-size: 0.95rem; font-weight: 700; border-bottom: 2px solid #e2e8f0;
+       padding-bottom: 0.4rem; margin-bottom: 0.75rem; margin-top: 0; }
+
+  /* ── Toolbar ───────────────────────────────────────────────────────── */
+  .toolbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
+             margin-bottom: 1rem; padding: 0.75rem 1rem; background: #fff;
+             border-bottom: 1px solid #e2e8f0; }
+  .toolbar a { padding: 0.35rem 0.8rem; background: #003366; color: white;
+               text-decoration: none; border-radius: 4px; font-size: 0.85rem; }
+  .toolbar a:hover { background: #00509e; }
+
+  /* ── Body wrapper ──────────────────────────────────────────────────── */
+  .page-wrap { padding: 1rem; }
+
+  /* ── Two-column layout ─────────────────────────────────────────────── */
+  .editor-layout { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; }
+  @media (max-width: 900px) { .editor-layout { grid-template-columns: 1fr; } }
+
+  /* ── Card ──────────────────────────────────────────────────────────── */
+  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
+          padding: 1rem; margin-bottom: 1rem; }
+
+  /* ── Upload / page nav row ─────────────────────────────────────────── */
+  .doc-controls { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+                  margin-bottom: 0.75rem; }
+  .doc-controls label { font-size: 0.8rem; color: #555; }
+  .file-btn { display: inline-block; padding: 0.35rem 0.8rem; background: #003366;
+              color: white; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .file-btn:hover { background: #00509e; }
+  .file-input-hidden { display: none; }
+  .page-nav { display: flex; align-items: center; gap: 0.35rem; }
+  .page-nav button { padding: 0.25rem 0.55rem; border: 1px solid #ccc; background: #f8f9fa;
+                     border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .page-nav button:disabled { opacity: 0.45; cursor: default; }
+  #page-label { font-size: 0.82rem; color: #555; min-width: 55px; text-align: center; }
+
+  /* ── Canvas wrapper ────────────────────────────────────────────────── */
+  .canvas-wrap { position: relative; border: 2px solid #e2e8f0; border-radius: 6px;
+                 background: #e8eaf0; min-height: 200px; overflow: auto; }
+  #editor-canvas { display: none; cursor: crosshair; max-width: none; }
+  #canvas-placeholder { display: flex; align-items: center; justify-content: center;
+                         min-height: 200px; color: #999; font-size: 0.9rem;
+                         flex-direction: column; gap: 0.5rem; padding: 2rem; text-align: center; }
+  .canvas-tip { font-size: 0.78rem; background: #fffbeb; border: 1px solid #fde68a;
+                border-radius: 4px; padding: 0.4rem 0.75rem; margin-top: 0.5rem; color: #92400e; }
+
+  /* ── Controls panel ────────────────────────────────────────────────── */
+  .controls-panel { display: flex; flex-direction: column; gap: 0; }
+
+  /* ── Form rows ──────────────────────────────────────────────────────── */
+  .form-row { margin-bottom: 0.6rem; }
+  .form-row label { display: block; font-size: 0.78rem; color: #555; margin-bottom: 0.2rem; font-weight: 600; }
+  .form-row input[type=text] { width: 100%; padding: 0.35rem 0.5rem; border: 1px solid #ccc;
+                                border-radius: 4px; font-size: 0.875rem; }
+  .form-row input[type=text]:focus { outline: 2px solid #003366; border-color: transparent; }
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  .btn { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.9rem;
+         border: none; border-radius: 4px; cursor: pointer; font-size: 0.875rem; font-weight: bold; }
+  .btn-primary { background: #003366; color: white; }
+  .btn-primary:hover { background: #00509e; }
+  .btn-green  { background: #15803d; color: white; }
+  .btn-green:hover  { background: #166534; }
+  .btn-green:disabled { opacity: 0.55; cursor: default; }
+  .btn-danger { background: #991b1b; color: white; padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+  .btn-danger:hover { background: #7f1d1d; }
+  .btn-outline { background: #f8f9fa; color: #003366; border: 1px solid #ccc; }
+  .btn-outline:hover { background: #e2e8f0; }
+  .btn-sm { padding: 0.25rem 0.55rem; font-size: 0.78rem; font-weight: bold; border: none;
+            border-radius: 4px; cursor: pointer; }
+
+  /* ── Box list table ─────────────────────────────────────────────────── */
+  .box-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .box-table th { background: #f1f5f9; padding: 0.4rem 0.5rem; text-align: left;
+                  border-bottom: 2px solid #e2e8f0; font-size: 0.78rem; color: #555; font-weight: 700; }
+  .box-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #f0f4f8; vertical-align: middle; }
+  .box-table tr:last-child td { border-bottom: none; }
+  .box-num { display: inline-flex; align-items: center; justify-content: center;
+             width: 22px; height: 22px; background: #cc0000; color: white;
+             border-radius: 50%; font-size: 0.75rem; font-weight: bold; flex-shrink: 0; }
+  .box-table select { width: 100%; padding: 0.25rem 0.3rem; border: 1px solid #ccc;
+                      border-radius: 4px; font-size: 0.8rem; }
+  .box-table input[type=text] { width: 100%; padding: 0.25rem 0.35rem; border: 1px solid #ccc;
+                                 border-radius: 4px; font-size: 0.78rem; }
+  .box-table input[type=text]::placeholder { color: #bbb; font-size: 0.75rem; }
+  .empty-msg { color: #999; font-size: 0.82rem; padding: 0.5rem 0; }
+
+  /* ── JSON preview ───────────────────────────────────────────────────── */
+  #json-preview { font-family: monospace; font-size: 0.78rem; background: #1e293b;
+                  color: #94d28e; border-radius: 6px; padding: 0.75rem; overflow-x: auto;
+                  max-height: 240px; overflow-y: auto; white-space: pre; display: none; }
+
+  /* ── Info banner ────────────────────────────────────────────────────── */
+  .info-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;
+                 padding: 0.6rem 0.9rem; font-size: 0.82rem; color: #1e3a5f; margin-bottom: 1rem; }
+  .info-banner strong { color: #003366; }
+
+  /* ── Status ─────────────────────────────────────────────────────────── */
+  #save-status { font-size: 0.85rem; font-weight: bold; margin-top: 0.6rem; min-height: 1.2em; }
+
+  /* ── Tolerance display ──────────────────────────────────────────────── */
+  .tolerance-row { display: flex; justify-content: space-between; font-size: 0.8rem;
+                   color: #555; padding: 0.3rem 0; border-bottom: 1px solid #f0f4f8; }
+  .tolerance-row:last-child { border-bottom: none; }
+  .tolerance-val { font-weight: bold; color: #003366; font-family: monospace; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <a href="/">⬆ Upload</a>
+  <a href="/review">📋 Records</a>
+  <a href="/annotate">🔍 Annotate</a>
+  <a href="/training">🏭 Training</a>
+  <a href="/help">❓ Help</a>
+</div>
+
+<div class="page-wrap">
+<h1>🗺️ State Layout Editor</h1>
+
+<div class="info-banner">
+  Draw <strong>numbered red boxes</strong> on the document to mark where each field
+  appears. Assign each box a <strong>field name</strong> using the panel on the right,
+  then click <strong>Save Template</strong>. The saved layout is used immediately by
+  the AI extraction pipeline to focus OCR on the correct regions — increasing
+  confidence for this state's title format.
+</div>
+
+<div class="editor-layout">
+
+  <!-- ── Left: document viewer ─────────────────────────────────────────── -->
+  <div class="viewer-panel">
+    <div class="card">
+      <h2>Title Document</h2>
+
+      <div class="doc-controls">
+        <label class="file-btn" for="file-input">📄 Open Document</label>
+        <input type="file" id="file-input" class="file-input-hidden"
+               accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
+
+        <div class="page-nav">
+          <button id="prev-page" disabled title="Previous page">◀</button>
+          <span id="page-label">— / —</span>
+          <button id="next-page" disabled title="Next page">▶</button>
+        </div>
+
+        <span id="upload-status" style="font-size:0.78rem;color:#666;"></span>
+      </div>
+
+      <div class="canvas-wrap" id="canvas-wrap">
+        <div id="canvas-placeholder">
+          <span>📁 Open a title document to start drawing field regions</span>
+          <span style="font-size:0.8rem;color:#aaa;">Supports PDF, PNG, JPEG, TIFF</span>
+        </div>
+        <canvas id="editor-canvas"></canvas>
+      </div>
+
+      <div class="canvas-tip" id="canvas-tip" style="display:none;">
+        🖱 <strong>Click and drag</strong> on the document to draw a field region box.
+        Each box gets a red number. Assign it to a field in the panel on the right.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: controls ───────────────────────────────────────────────── -->
+  <div class="controls-panel">
+
+    <!-- State metadata -->
+    <div class="card">
+      <h2>State Template</h2>
+      <div class="form-row">
+        <label>State abbreviation (2-letter):</label>
+        <input type="text" id="state-input" maxlength="2" placeholder="e.g. NM"
+               style="text-transform:uppercase;width:80px;">
+      </div>
+      <div class="form-row">
+        <label>State full name:</label>
+        <input type="text" id="state-name-input" placeholder="e.g. New Mexico">
+      </div>
+      <div class="form-row">
+        <label>Layout version:</label>
+        <input type="text" id="layout-version-input" value="1" placeholder="1" style="width:60px;">
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.25rem;">
+        <button class="btn btn-outline" onclick="loadTemplate()">📂 Load Existing</button>
+        <button class="btn btn-outline" onclick="clearAllBoxes()">🗑 Clear Boxes</button>
+      </div>
+    </div>
+
+    <!-- Field regions list -->
+    <div class="card">
+      <h2>Field Regions <span id="box-count-badge"
+           style="font-size:0.75rem;background:#e2e8f0;color:#444;
+                  border-radius:99px;padding:0.1rem 0.5rem;font-weight:normal;margin-left:0.25rem;"></span></h2>
+      <div id="box-list">
+        <p class="empty-msg">No boxes yet — draw on the document first.</p>
+      </div>
+    </div>
+
+    <!-- AI integration note -->
+    <div class="card">
+      <h2>🤖 AI Integration</h2>
+      <p style="font-size:0.82rem;color:#444;margin-bottom:0.6rem;">
+        The saved template is immediately used by the AI extraction pipeline.
+        When a title from this state is uploaded:
+      </p>
+      <ul style="font-size:0.8rem;color:#555;padding-left:1.2rem;line-height:1.7;">
+        <li>Each region box is cropped from the document image.</li>
+        <li>Crops are sent to the AI model alongside the full-page image.</li>
+        <li>Label hints sharpen the AI prompt for each field.</li>
+        <li>Result confidence is boosted for fields with focused crops.</li>
+      </ul>
+      <p style="font-size:0.78rem;color:#666;margin-top:0.6rem;">
+        Active AI confidence threshold:
+        <strong id="conf-threshold" style="font-family:monospace;color:#003366;"></strong>
+        (set via <code>AI_CONFIDENCE_THRESHOLD</code> env var).
+      </p>
+      <p style="font-size:0.78rem;color:#666;margin-top:0.4rem;">
+        Active model: <strong id="active-model" style="font-family:monospace;color:#003366;"></strong>
+      </p>
+    </div>
+
+    <!-- Save -->
+    <div class="card">
+      <h2>Save Template</h2>
+      <p style="font-size:0.82rem;color:#444;margin-bottom:0.75rem;">
+        Saves the layout as <code>state_templates/&lt;STATE&gt;.json</code> on
+        the server. The template is immediately active for all future extractions
+        — no restart needed.
+      </p>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button class="btn btn-green" id="save-btn" onclick="saveTemplate()">💾 Save Template</button>
+        <button class="btn btn-outline" onclick="toggleJsonPreview()">{ } Preview JSON</button>
+      </div>
+      <div id="save-status"></div>
+      <pre id="json-preview"></pre>
+    </div>
+
+  </div><!-- /controls-panel -->
+</div><!-- /editor-layout -->
+</div><!-- /page-wrap -->
+
+<script>
+'use strict';
+
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const FIELD_NAMES = [
+  '', // placeholder
+  'state', 'title_number', 'vin', 'vehicle_year', 'make', 'model',
+  'body_style', 'color', 'odometer', 'owner_name', 'owner_address',
+  'purchase_price', 'sale_date', 'issue_date',
+];
+
+const FIELD_LABELS = {
+  '':               '— select field —',
+  state:            'state',
+  title_number:     'title_number',
+  vin:              'vin',
+  vehicle_year:     'vehicle_year',
+  make:             'make',
+  model:            'model',
+  body_style:       'body_style',
+  color:            'color',
+  odometer:         'odometer',
+  owner_name:       'owner_name',
+  owner_address:    'owner_address',
+  purchase_price:   'purchase_price',
+  sale_date:        'sale_date',
+  issue_date:       'issue_date',
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+let bgImage   = null;   // HTMLImageElement rendered into the canvas
+let canvasW   = 0;
+let canvasH   = 0;
+let boxes     = [];     // [{id, x1, y1, x2, y2}]
+let mappings  = {};     // {id: {field:'', hints:[]}}
+let nextBoxId = 1;
+
+let currentPage    = 1;
+let totalPages     = 1;
+let originalFilename = null;  // UUID filename of the original uploaded PDF/image
+
+// Drawing rubber-band
+let isDrawing  = false;
+let drawStart  = null;
+let drawCurrent = null;
+
+// Pending template to render when image is loaded
+let pendingTemplate = null;
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+
+const canvas      = document.getElementById('editor-canvas');
+const ctx         = canvas.getContext('2d');
+const fileInput   = document.getElementById('file-input');
+const prevBtn     = document.getElementById('prev-page');
+const nextBtn     = document.getElementById('next-page');
+const pageLabel   = document.getElementById('page-label');
+const uploadStatus = document.getElementById('upload-status');
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
+(async function init() {
+  // Pre-fill state from server-rendered initial value.
+  const initialState = {{ initial_state | tojson }};
+  if (initialState) {
+    const stateInput = document.getElementById('state-input');
+    stateInput.value = initialState;
+    await autoLoadTemplate(initialState);
+  }
+
+  // Fetch active model and confidence threshold for the info panel.
+  try {
+    const resp = await fetch('/api/status');
+    if (resp.ok) {
+      const data = await resp.json();
+      // Confidence threshold is not directly in /api/status; show placeholder.
+      document.getElementById('active-model').textContent = 'see /training';
+    }
+  } catch (_) { /* ignore */ }
+
+  try {
+    const resp = await fetch('/api/models');
+    if (resp.ok) {
+      const data = await resp.json();
+      document.getElementById('active-model').textContent = data.active || '(unknown)';
+    }
+  } catch (_) { /* ignore */ }
+})();
+
+// ── File upload ──────────────────────────────────────────────────────────────
+
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  uploadStatus.textContent = '⏳ Uploading…';
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/layout-editor/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (!resp.ok) {
+      uploadStatus.textContent = '✖ ' + (data.error || 'Upload failed.');
+      return;
+    }
+    originalFilename = data.original_filename;
+    totalPages = data.page_count || 1;
+    currentPage = 1;
+    updatePageNav();
+    uploadStatus.textContent = '';
+    await loadImageFromUrl(data.url);
+    document.getElementById('canvas-tip').style.display = 'block';
+  } catch (err) {
+    uploadStatus.textContent = '✖ Network error: ' + err.message;
+  }
+});
+
+// ── Page navigation ───────────────────────────────────────────────────────────
+
+prevBtn.addEventListener('click', async () => {
+  if (currentPage <= 1) return;
+  currentPage--;
+  updatePageNav();
+  await fetchPage(currentPage);
+});
+
+nextBtn.addEventListener('click', async () => {
+  if (currentPage >= totalPages) return;
+  currentPage++;
+  updatePageNav();
+  await fetchPage(currentPage);
+});
+
+function updatePageNav() {
+  pageLabel.textContent = `${currentPage} / ${totalPages}`;
+  prevBtn.disabled = currentPage <= 1;
+  nextBtn.disabled = currentPage >= totalPages;
+}
+
+async function fetchPage(page) {
+  if (!originalFilename) return;
+  uploadStatus.textContent = `⏳ Loading page ${page}…`;
+  try {
+    const resp = await fetch(`/api/layout-editor/page/${encodeURIComponent(originalFilename)}?page=${page}`);
+    const data = await resp.json();
+    if (!resp.ok) {
+      uploadStatus.textContent = '✖ ' + (data.error || 'Failed to load page.');
+      return;
+    }
+    uploadStatus.textContent = '';
+    await loadImageFromUrl(data.url);
+  } catch (err) {
+    uploadStatus.textContent = '✖ ' + err.message;
+  }
+}
+
+// ── Image loading ─────────────────────────────────────────────────────────────
+
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      bgImage = img;
+
+      // Fit canvas to container width, preserving aspect ratio.
+      const wrap = document.getElementById('canvas-wrap');
+      const maxW = Math.max(300, wrap.clientWidth - 4);
+      const scale = Math.min(1.0, maxW / img.naturalWidth);
+      canvasW = Math.round(img.naturalWidth  * scale);
+      canvasH = Math.round(img.naturalHeight * scale);
+      canvas.width  = canvasW;
+      canvas.height = canvasH;
+      canvas.style.display = 'block';
+      document.getElementById('canvas-placeholder').style.display = 'none';
+
+      // If a template was pre-loaded, convert regions to boxes now.
+      if (pendingTemplate) {
+        applyTemplateToCanvas(pendingTemplate);
+        pendingTemplate = null;
+      }
+
+      redraw();
+      resolve();
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// ── Canvas drawing ────────────────────────────────────────────────────────────
+
+function redraw() {
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  if (bgImage) {
+    ctx.drawImage(bgImage, 0, 0, canvasW, canvasH);
+  }
+  for (const box of boxes) {
+    drawBox(box, false);
+  }
+  if (isDrawing && drawStart && drawCurrent) {
+    const x = Math.min(drawStart.x, drawCurrent.x);
+    const y = Math.min(drawStart.y, drawCurrent.y);
+    const w = Math.abs(drawCurrent.x - drawStart.x);
+    const h = Math.abs(drawCurrent.y - drawStart.y);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(200,0,0,0.85)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(220,0,0,0.07)';
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+  }
+}
+
+function drawBox(box, _highlighted) {
+  const x = Math.min(box.x1, box.x2);
+  const y = Math.min(box.y1, box.y2);
+  const w = Math.abs(box.x2 - box.x1);
+  const h = Math.abs(box.y2 - box.y1);
+  const m = mappings[box.id] || { field: '', hints: [] };
+
+  ctx.save();
+
+  // Translucent fill.
+  ctx.fillStyle = 'rgba(220, 0, 0, 0.08)';
+  ctx.fillRect(x, y, w, h);
+
+  // Red solid border.
+  ctx.strokeStyle = 'rgba(204, 0, 0, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.strokeRect(x, y, w, h);
+
+  // Number badge (top-left corner of box).
+  const label = String(box.id);
+  const badgeSize = Math.min(20, Math.max(12, Math.min(w, h) * 0.28));
+  const badgeW = badgeSize * label.length * 0.7 + 6;
+  ctx.fillStyle = '#cc0000';
+  ctx.fillRect(x, y, badgeW, badgeSize + 4);
+  ctx.fillStyle = 'white';
+  ctx.font = `bold ${badgeSize}px Arial`;
+  ctx.textBaseline = 'top';
+  ctx.fillText(label, x + 3, y + 2);
+
+  // Field-name chip below badge (if assigned).
+  if (m.field) {
+    const chipText = m.field.replace(/_/g, ' ');
+    ctx.font = '10px Arial';
+    ctx.textBaseline = 'top';
+    const chipW = ctx.measureText(chipText).width + 6;
+    const chipH = 14;
+    const chipY = y + badgeSize + 6;
+    if (chipY + chipH < y + h) {
+      ctx.fillStyle = 'rgba(0, 51, 102, 0.78)';
+      ctx.fillRect(x + 2, chipY, chipW, chipH);
+      ctx.fillStyle = 'white';
+      ctx.fillText(chipText, x + 5, chipY + 2);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ── Mouse events ──────────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  isDrawing  = true;
+  drawStart  = canvasPos(e);
+  drawCurrent = { ...drawStart };
+  e.preventDefault();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!isDrawing) return;
+  drawCurrent = canvasPos(e);
+  redraw();
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (!isDrawing) return;
+  isDrawing = false;
+  const pos = canvasPos(e);
+  const w = Math.abs(pos.x - drawStart.x);
+  const h = Math.abs(pos.y - drawStart.y);
+  if (w > 8 && h > 8) {
+    const id = nextBoxId++;
+    boxes.push({ id, x1: drawStart.x, y1: drawStart.y, x2: pos.x, y2: pos.y });
+    mappings[id] = { field: '', hints: [] };
+    renderBoxList();
+    redraw();
+  } else {
+    drawStart   = null;
+    drawCurrent = null;
+    redraw();
+  }
+  drawStart   = null;
+  drawCurrent = null;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (isDrawing) {
+    isDrawing   = false;
+    drawStart   = null;
+    drawCurrent = null;
+    redraw();
+  }
+});
+
+// Touch support (basic).
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  isDrawing   = true;
+  drawStart   = canvasPosFromClient(t.clientX, t.clientY);
+  drawCurrent = { ...drawStart };
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!isDrawing) return;
+  const t = e.touches[0];
+  drawCurrent = canvasPosFromClient(t.clientX, t.clientY);
+  redraw();
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  if (!isDrawing) return;
+  isDrawing = false;
+  const w = Math.abs(drawCurrent.x - drawStart.x);
+  const h = Math.abs(drawCurrent.y - drawStart.y);
+  if (w > 8 && h > 8) {
+    const id = nextBoxId++;
+    boxes.push({ id, x1: drawStart.x, y1: drawStart.y, x2: drawCurrent.x, y2: drawCurrent.y });
+    mappings[id] = { field: '', hints: [] };
+    renderBoxList();
+    redraw();
+  }
+  drawStart   = null;
+  drawCurrent = null;
+  redraw();
+});
+
+function canvasPos(e) {
+  return canvasPosFromClient(e.clientX, e.clientY);
+}
+
+function canvasPosFromClient(cx, cy) {
+  const rect = canvas.getBoundingClientRect();
+  // Account for CSS scaling of canvas element relative to its logical size.
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (cx - rect.left) * scaleX,
+    y: (cy - rect.top)  * scaleY,
+  };
+}
+
+// ── Box list UI ───────────────────────────────────────────────────────────────
+
+function renderBoxList() {
+  const container = document.getElementById('box-list');
+  const badge     = document.getElementById('box-count-badge');
+  badge.textContent = boxes.length ? `${boxes.length}` : '';
+
+  if (boxes.length === 0) {
+    container.innerHTML = '<p class="empty-msg">No boxes yet — draw on the document first.</p>';
+    return;
+  }
+
+  const rows = boxes.map(box => {
+    const m = mappings[box.id] || { field: '', hints: [] };
+    const hintsStr = (m.hints || []).join(', ');
+    const fieldOptions = FIELD_NAMES.map(f =>
+      `<option value="${f}" ${f === m.field ? 'selected' : ''}>${FIELD_LABELS[f] || f}</option>`
+    ).join('');
+
+    return `
+      <tr id="box-row-${box.id}">
+        <td><span class="box-num">${box.id}</span></td>
+        <td>
+          <select onchange="setBoxField(${box.id}, this.value)">
+            ${fieldOptions}
+          </select>
+        </td>
+        <td>
+          <input type="text" value="${escHtml(hintsStr)}"
+                 placeholder="TITLE NO, TITLE NUMBER"
+                 oninput="setBoxHints(${box.id}, this.value)"
+                 title="Comma-separated label hints used in the AI prompt">
+        </td>
+        <td>
+          <button class="btn-sm btn-danger" onclick="deleteBox(${box.id})" title="Delete box">🗑</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <table class="box-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Field</th>
+          <th>Label hints</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function setBoxField(boxId, field) {
+  if (!mappings[boxId]) mappings[boxId] = { field: '', hints: [] };
+  mappings[boxId].field = field;
+  redraw();
+}
+
+function setBoxHints(boxId, val) {
+  if (!mappings[boxId]) mappings[boxId] = { field: '', hints: [] };
+  mappings[boxId].hints = val.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+}
+
+function deleteBox(boxId) {
+  boxes = boxes.filter(b => b.id !== boxId);
+  delete mappings[boxId];
+  renderBoxList();
+  redraw();
+}
+
+function clearAllBoxes() {
+  if (boxes.length > 0 && !confirm('Clear all boxes?')) return;
+  boxes     = [];
+  mappings  = {};
+  nextBoxId = 1;
+  renderBoxList();
+  redraw();
+}
+
+// ── Template build / save ─────────────────────────────────────────────────────
+
+function buildTemplate() {
+  const state         = document.getElementById('state-input').value.trim().toUpperCase();
+  const stateName     = document.getElementById('state-name-input').value.trim();
+  const layoutVersion = document.getElementById('layout-version-input').value.trim() || '1';
+
+  if (!state || !/^[A-Z]{2}$/.test(state)) {
+    throw new Error('Enter a valid 2-letter state abbreviation.');
+  }
+  if (!canvasW || !canvasH) {
+    throw new Error('Upload a document first so coordinates can be normalised.');
+  }
+
+  // Group regions by field name.
+  const fields = {};
+  for (const box of boxes) {
+    const m = mappings[box.id];
+    if (!m || !m.field) continue; // skip unmapped boxes
+
+    const left   = parseFloat((Math.min(box.x1, box.x2) / canvasW).toFixed(4));
+    const top    = parseFloat((Math.min(box.y1, box.y2) / canvasH).toFixed(4));
+    const right  = parseFloat((Math.max(box.x1, box.x2) / canvasW).toFixed(4));
+    const bottom = parseFloat((Math.max(box.y1, box.y2) / canvasH).toFixed(4));
+
+    if (!fields[m.field]) {
+      fields[m.field] = { regions: [], label_hints: [] };
+    }
+    fields[m.field].regions.push({ left, top, right, bottom });
+
+    // Merge hints (deduplicate across multiple boxes for the same field).
+    const existing = new Set(fields[m.field].label_hints);
+    for (const h of (m.hints || [])) {
+      if (!existing.has(h)) {
+        fields[m.field].label_hints.push(h);
+        existing.add(h);
+      }
+    }
+  }
+
+  return { state, state_name: stateName || state, layout_version: layoutVersion, fields };
+}
+
+async function saveTemplate() {
+  const statusEl = document.getElementById('save-status');
+  const btn      = document.getElementById('save-btn');
+  statusEl.textContent = '';
+  statusEl.style.color = '';
+
+  let tmpl;
+  try {
+    tmpl = buildTemplate();
+  } catch (err) {
+    statusEl.style.color = '#991b1b';
+    statusEl.textContent  = '✖ ' + err.message;
+    return;
+  }
+
+  const mapped = Object.keys(tmpl.fields);
+  if (mapped.length === 0) {
+    statusEl.style.color  = '#d97706';
+    statusEl.textContent  = '⚠ No boxes have been assigned to fields. Assign field names in the list.';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Saving…';
+
+  try {
+    const resp = await fetch(`/api/layout/${tmpl.state}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(tmpl),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      statusEl.style.color = '#991b1b';
+      statusEl.textContent  = '✖ ' + (data.error || 'Failed to save.');
+      return;
+    }
+    statusEl.style.color = '#15803d';
+    statusEl.textContent  =
+      `✔ Template for ${tmpl.state} saved — ${mapped.length} field(s): ${mapped.join(', ')}.`;
+
+    // Refresh JSON preview if open.
+    const preview = document.getElementById('json-preview');
+    if (preview.style.display !== 'none') {
+      preview.textContent = JSON.stringify(tmpl, null, 2);
+    }
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '💾 Save Template';
+  }
+}
+
+function toggleJsonPreview() {
+  const preview = document.getElementById('json-preview');
+  if (preview.style.display !== 'none') {
+    preview.style.display = 'none';
+    return;
+  }
+  let tmpl;
+  try {
+    tmpl = buildTemplate();
+  } catch (err) {
+    preview.style.display = 'block';
+    preview.textContent   = '// Error: ' + err.message;
+    return;
+  }
+  preview.textContent   = JSON.stringify(tmpl, null, 2);
+  preview.style.display = 'block';
+}
+
+// ── Template load ─────────────────────────────────────────────────────────────
+
+async function loadTemplate() {
+  const state = document.getElementById('state-input').value.trim().toUpperCase();
+  if (!state || !/^[A-Z]{2}$/.test(state)) {
+    alert('Enter a valid 2-letter state abbreviation first.');
+    return;
+  }
+
+  const resp = await fetch(`/api/layout/${state}`);
+  if (!resp.ok) { alert(`Failed to load template for ${state}.`); return; }
+  const tmpl = await resp.json();
+  if (!tmpl.state) { alert(`No template found for ${state}.`); return; }
+
+  document.getElementById('state-name-input').value    = tmpl.state_name     || '';
+  document.getElementById('layout-version-input').value = tmpl.layout_version || '1';
+
+  if (bgImage && canvasW > 0) {
+    applyTemplateToCanvas(tmpl);
+  } else {
+    pendingTemplate = tmpl;
+    alert(`Template for ${state} loaded. Upload a document to visualise the regions.`);
+  }
+}
+
+function applyTemplateToCanvas(tmpl) {
+  boxes     = [];
+  mappings  = {};
+  nextBoxId = 1;
+
+  for (const [fieldName, fdata] of Object.entries(tmpl.fields || {})) {
+    for (const region of (fdata.regions || [])) {
+      const id = nextBoxId++;
+      boxes.push({
+        id,
+        x1: region.left   * canvasW,
+        y1: region.top    * canvasH,
+        x2: region.right  * canvasW,
+        y2: region.bottom * canvasH,
+      });
+      mappings[id] = {
+        field: fieldName,
+        hints: fdata.label_hints ? [...fdata.label_hints] : [],
+      };
+    }
+  }
+  renderBoxList();
+  redraw();
+}
+
+// Auto-load template when state input changes (debounced).
+let _stateTimer = null;
+document.getElementById('state-input').addEventListener('input', (e) => {
+  clearTimeout(_stateTimer);
+  _stateTimer = setTimeout(async () => {
+    const v = e.target.value.trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(v)) await autoLoadTemplate(v);
+  }, 600);
+});
+
+async function autoLoadTemplate(state) {
+  const resp = await fetch(`/api/layout/${state}`);
+  if (!resp.ok) return;
+  const tmpl = await resp.json();
+  if (!tmpl.state) return;
+
+  document.getElementById('state-name-input').value    = tmpl.state_name     || '';
+  document.getElementById('layout-version-input').value = tmpl.layout_version || '1';
+
+  if (bgImage && canvasW > 0) {
+    applyTemplateToCanvas(tmpl);
+  } else {
+    pendingTemplate = tmpl;
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>
