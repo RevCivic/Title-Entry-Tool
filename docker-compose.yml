@@ -118,50 +118,82 @@ services:
           exit 0
         fi
 
+        # Helper: pull a single model with up to 3 retries.
+        # Usage: pull_model <name>
+        # Returns 0 on success, 1 if all attempts fail.
+        pull_model() {
+          pm_name="$$1"
+          for attempt in 1 2 3; do
+            echo "  attempt $${attempt}/3"
+            if OLLAMA_HOST="$${HOST}" ollama pull "$${pm_name}"; then
+              echo "Model '$${pm_name}' pulled successfully."
+              return 0
+            fi
+            if [ "$${attempt}" -lt 3 ]; then
+              sleep 5
+            fi
+          done
+          return 1
+        }
+
         # If the model is already present locally (e.g. a custom model created via
         # the app's Training dashboard, or a previously-pulled registry model),
         # skip the pull entirely.  Match the model name followed by whitespace so
         # that a name like 'titles' does not accidentally match 'titles-custom'.
         if OLLAMA_HOST="$${HOST}" ollama list 2>/dev/null | grep -q "^$${MODEL}[[:space:]]"; then
           echo "Model '$${MODEL}' is already available locally. Nothing to pull."
-          exit 0
+        else
+          echo "Model '$${MODEL}' not found locally. Pulling from registry ..."
+          # NOTE: if '$${MODEL}' is a custom model built via the app's Training
+          # dashboard (e.g. 'titles-custom'), it cannot be downloaded from the
+          # public registry.  Use the Training UI to create it first:
+          #   Annotate → approve corrections → Apply to LLM.
+          # The pull attempts below will only succeed for public Ollama models.
+          if ! pull_model "$${MODEL}"; then
+            echo "WARNING: could not pull '$${MODEL}' from the registry." \
+                 "If this is a custom model (built via the Training dashboard)," \
+                 "use Training → Apply to AI Model to create it first." \
+                 "The app will continue using OCR-only extraction until the model" \
+                 "is available.  Run 'docker compose logs ollama-init' to review" \
+                 "this output, then restart this service to retry." >&2
+          fi
         fi
 
-        echo "Model '$${MODEL}' not found locally. Pulling from registry ..."
-        # NOTE: if '$${MODEL}' is a custom model built via the app's Training
-        # dashboard (e.g. 'titles-custom'), it cannot be downloaded from the
-        # public registry.  Use the Training UI to create it first:
-        #   Annotate → approve corrections → Apply to LLM.
-        # The pull attempts below will only succeed for public Ollama models.
-
-        # Retry up to 3 times with a short back-off.  The depends_on
-        # condition only guarantees the container has started; retrying guards
-        # against transient timing/network issues while pulling.
-        for attempt in 1 2 3; do
-          echo "  attempt $${attempt}/3"
-          if OLLAMA_HOST="$${HOST}" ollama pull "$${MODEL}"; then
-            echo "Model '$${MODEL}' pulled successfully."
-            exit 0
+        # Always ensure the base model (LLM_BASE_MODEL, or 'moondream' as the
+        # default) is available locally.  This is required so that the Training
+        # dashboard's "Apply to AI Model" feature can build a custom model even
+        # when AI_MODEL is already set to a custom name like 'titles-custom'.
+        # The Ollama /api/create endpoint uses the base model as the starting
+        # point; if the base model is missing, model creation fails with a
+        # "file does not exist" / manifest error.
+        BASE_MODEL="$${LLM_BASE_MODEL:-}"
+        if [ -z "$${BASE_MODEL}" ]; then
+          # Default: use moondream unless AI_MODEL already resolved to it.
+          if [ "$${MODEL}" != "moondream" ]; then
+            BASE_MODEL="moondream"
           fi
-          if [ "$${attempt}" -lt 3 ]; then
-            sleep 5
-          fi
-        done
+        fi
 
-        echo "ERROR: failed to pull model '$${MODEL}' after 3 attempts." \
-             "If '$${MODEL}' is a custom model (e.g. built via the app's Training" \
-             "dashboard), it cannot be pulled from the registry -- use the Training" \
-             "UI to create it first (Annotate → approve corrections → Apply to LLM)." \
-             "For public registry models, check the model name, network connectivity," \
-             "and available disk space on the ollama_data volume." \
-             "The app will continue using OCR-only extraction until the model is" \
-             "available.  Run 'docker compose logs ollama-init' to review this" \
-             "output, then restart this service to retry." >&2
+        if [ -n "$${BASE_MODEL}" ] && [ "$${BASE_MODEL}" != "$${MODEL}" ]; then
+          echo "Ensuring base model '$${BASE_MODEL}' is available (needed for Training → Apply to AI Model) ..."
+          if OLLAMA_HOST="$${HOST}" ollama list 2>/dev/null | grep -q "^$${BASE_MODEL}[[:space:]]"; then
+            echo "Base model '$${BASE_MODEL}' is already available locally."
+          else
+            echo "Pulling base model '$${BASE_MODEL}' ..."
+            if ! pull_model "$${BASE_MODEL}"; then
+              echo "ERROR: failed to pull base model '$${BASE_MODEL}' after 3 attempts." \
+                   "Training → Apply to AI Model will fail until this model is available." \
+                   "Check network connectivity, disk space on the ollama_data volume," \
+                   "and verify the model name at https://ollama.com/library." >&2
+            fi
+          fi
+        fi
         # Exit 0 so orchestrators (Portainer, Compose) do not treat a failed
         # model pull as a fatal stack error and tear down the other services.
     environment:
       OLLAMA_HOST: http://ollama:11434
       AI_MODEL: ${AI_MODEL:-moondream}
+      LLM_BASE_MODEL: ${LLM_BASE_MODEL:-}
     depends_on:
       ollama:
         # Keep deployment resilient: start once Ollama container is up, then do
