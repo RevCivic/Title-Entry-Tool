@@ -324,21 +324,16 @@ const uploadStatus = document.getElementById('upload-status');
 
   // Fetch active model and confidence threshold for the info panel.
   try {
-    const resp = await fetch('/api/status');
-    if (resp.ok) {
-      const data = await resp.json();
-      // Confidence threshold is not directly in /api/status; show placeholder.
-      document.getElementById('active-model').textContent = 'see /training';
-    }
-  } catch (_) { /* ignore */ }
-
-  try {
     const resp = await fetch('/api/models');
     if (resp.ok) {
       const data = await resp.json();
       document.getElementById('active-model').textContent = data.active || '(unknown)';
     }
   } catch (_) { /* ignore */ }
+
+  // Display the default confidence threshold value.
+  document.getElementById('conf-threshold').textContent =
+    'configured via AI_CONFIDENCE_THRESHOLD (default: 0.6)';
 })();
 
 // ── File upload ──────────────────────────────────────────────────────────────
@@ -809,24 +804,44 @@ function toggleJsonPreview() {
 
 async function loadTemplate() {
   const state = document.getElementById('state-input').value.trim().toUpperCase();
+  const statusEl = document.getElementById('save-status');
   if (!state || !/^[A-Z]{2}$/.test(state)) {
-    alert('Enter a valid 2-letter state abbreviation first.');
+    statusEl.style.color = '#991b1b';
+    statusEl.textContent = '✖ Enter a valid 2-letter state abbreviation (e.g., NM, CA) first.';
     return;
   }
 
-  const resp = await fetch(`/api/layout/${state}`);
-  if (!resp.ok) { alert(`Failed to load template for ${state}.`); return; }
-  const tmpl = await resp.json();
-  if (!tmpl.state) { alert(`No template found for ${state}.`); return; }
+  statusEl.textContent = `⏳ Loading template for ${state}…`;
+  statusEl.style.color = '#555';
+
+  let resp, tmpl;
+  try {
+    resp = await fetch(`/api/layout/${state}`);
+    tmpl = await resp.json();
+  } catch (err) {
+    statusEl.style.color = '#991b1b';
+    statusEl.textContent = `✖ Network error loading template for ${state}.`;
+    return;
+  }
+
+  if (!resp.ok || !tmpl.state) {
+    statusEl.style.color = '#d97706';
+    statusEl.textContent = `ℹ No existing template found for ${state}. Draw boxes to create one.`;
+    return;
+  }
 
   document.getElementById('state-name-input').value    = tmpl.state_name     || '';
   document.getElementById('layout-version-input').value = tmpl.layout_version || '1';
 
   if (bgImage && canvasW > 0) {
     applyTemplateToCanvas(tmpl);
+    const fieldCount = Object.keys(tmpl.fields || {}).length;
+    statusEl.style.color = '#15803d';
+    statusEl.textContent = `✔ Template for ${state} loaded — ${fieldCount} field region(s) visualised.`;
   } else {
     pendingTemplate = tmpl;
-    alert(`Template for ${state} loaded. Upload a document to visualise the regions.`);
+    statusEl.style.color = '#15803d';
+    statusEl.textContent = `✔ Template for ${state} loaded. Open a document to visualise the regions.`;
   }
 }
 
