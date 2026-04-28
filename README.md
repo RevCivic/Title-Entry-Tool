@@ -48,7 +48,8 @@ export_validated_to_csv(connection, "nmvitis_upload.csv")
 | `DB_PASSWORD`             | *(empty)*                    | PostgreSQL password                                           |
 | `EXTRACTION_PROVIDER`     | `hybrid`                     | `tesseract`, `ai`, or `hybrid`                                |
 | `AI_ENDPOINT`             | `http://ollama:11434`        | Base URL of the self-hosted Ollama service                    |
-| `AI_MODEL`                | `moondream`                  | Ollama model name (`moondream` recommended for documents)     |
+| `AI_MODEL`                | `moondream`                  | Ollama model name used for extraction (`moondream` recommended for documents) |
+| `LLM_BASE_MODEL`          | *(empty — falls back to `AI_MODEL`)* | Base model for Training → Apply to AI Model. **Required** when `AI_MODEL` is already set to a custom model name (e.g. `titles-custom`). Set to the underlying registry model (e.g. `moondream`). |
 | `AI_TIMEOUT`              | `60`                         | HTTP timeout in seconds for each AI inference call            |
 | `AI_CONFIDENCE_THRESHOLD` | `0.6`                        | Fields below this confidence are flagged for review           |
 
@@ -233,9 +234,117 @@ python train_ocr.py export --fields vin,make --output training_data/
 The exported `manifest.json` is compatible with LLaVA-style LoRA fine-tuning
 and Tesseract `.box`/`.tif` training pipelines.
 
+### Custom AI model creation (prompt-tuning)
+
+The Training dashboard lets you build a custom Ollama model that is
+pre-loaded with your site's ground-truth corrections as few-shot examples.
+This is **prompt-tuning only** — no GPU or weight modifications required.
+
+#### How it works
+
+The app calls Ollama's `/api/create` REST endpoint directly with a JSON
+payload containing:
+- `from` — the base registry model (e.g. `moondream`)
+- `system` — a detailed NMVITIS-field extraction prompt
+- `messages` — up to 30 user/assistant few-shot pairs from your approved corrections
+
+**No Modelfile is written to disk.** Ollama stores the resulting custom model
+inside the `ollama_data` Docker volume at `/root/.ollama/models/` on the
+Ollama container.  You cannot reference a file path with `ollama create -f`
+for this workflow; the creation happens entirely through the API.
+
+#### End-to-end workflow
+
+1. **Start with the base model** — ensure `AI_MODEL=moondream` (or another
+   public Ollama model) in your `.env` and start the stack with `COMPOSE_PROFILES=ai`.
+   The `ollama-init` service pulls the model automatically.
+
+2. **Annotate titles** — upload PDFs/images and correct any mis-extracted
+   fields in the `/review` UI.  Click **Approve** to mark records as
+   ground-truth.
+
+3. **Apply to AI Model** — go to the Training dashboard (`/training`) and
+   click **Apply to AI Model**.  The app creates a new custom model (default
+   name: `titles-custom`) from `moondream` plus your annotations.
+
+4. **Switch to the custom model** — update your `.env`:
+
+   ```dotenv
+   AI_MODEL=titles-custom
+   LLM_BASE_MODEL=moondream
+   ```
+
+   Then restart the stack (`docker compose up --build`).  The `ollama-init`
+   service will detect that `titles-custom` is a custom (non-registry) model,
+   skip the registry pull, and ensure `moondream` is available so that future
+   runs of **Apply to AI Model** can rebuild the custom model at any time.
+
+5. **Re-apply after new annotations** — repeat step 2–3 as you collect more
+   corrections.  Each **Apply to AI Model** call rebuilds and overwrites the
+   custom model in place.
+
+#### Required environment variables for custom-model workflows
+
+| Scenario | `AI_MODEL` | `LLM_BASE_MODEL` |
+|---|---|---|
+| Using only the public base model | `moondream` | *(leave empty)* |
+| Custom model active, base still needed for re-training | `titles-custom` | `moondream` |
+
+> **Important:** if `AI_MODEL` and `LLM_BASE_MODEL` are both set to the same
+> value the app will reject the **Apply to AI Model** request with a
+> configuration error.  Always point `LLM_BASE_MODEL` at the underlying
+> registry model, not the custom model name.
+
+#### Where Ollama stores models
+
+Ollama stores all model blobs inside the `ollama_data` named Docker volume,
+which is mounted into the Ollama container at `/root/.ollama/`.  The layout is:
+
+```
+/root/.ollama/
+  models/
+    blobs/       ← raw layer blobs (shared between model variants)
+    manifests/   ← per-model manifest files (registry + custom)
+      registry.ollama.ai/library/moondream/latest
+      …
+```
+
+Custom models created via the API are also stored here.  The volume persists
+across container restarts and stack upgrades.  To list all models currently in
+the volume run:
+
+```bash
+docker compose exec ollama ollama list
+```
+
+#### Troubleshooting "file does not exist" / manifest errors
+
+These errors mean Ollama cannot locate the **base model** when trying to
+create the custom model.  Common causes and fixes:
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `file does not exist` or `manifest not found` when clicking **Apply to AI Model** | `moondream` (or the model named in `LLM_BASE_MODEL`) is not present in the `ollama_data` volume | Pull the base model: `docker compose exec ollama ollama pull moondream` |
+| `ollama-init` logs show the model pull failed | `AI_MODEL` is set to a custom model name before running **Apply to AI Model** for the first time | Set `LLM_BASE_MODEL=moondream` in `.env` and restart the stack; `ollama-init` will then pull `moondream` automatically |
+| `AI_MODEL is set to 'titles-custom', which cannot be used as its own base model` | `LLM_BASE_MODEL` is empty or matches `AI_MODEL` | Set `LLM_BASE_MODEL=moondream` in `.env` |
+| Custom model does not survive a stack restart | `ollama_data` volume was deleted or re-created | Re-run **Apply to AI Model** from the Training dashboard to rebuild it |
+
+To manually pull the base model without restarting the stack:
+
+```bash
+docker compose exec ollama ollama pull moondream
+```
+
+To verify which models are currently available:
+
+```bash
+docker compose exec ollama ollama list
+```
+
 ### Run tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
+
 
