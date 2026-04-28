@@ -122,11 +122,11 @@ services:
         # Usage: pull_model <name>
         # Returns 0 on success, 1 if all attempts fail.
         pull_model() {
-          _pm_name="$$1"
+          pm_name="$$1"
           for attempt in 1 2 3; do
             echo "  attempt $${attempt}/3"
-            if OLLAMA_HOST="$${HOST}" ollama pull "$${_pm_name}"; then
-              echo "Model '$${_pm_name}' pulled successfully."
+            if OLLAMA_HOST="$${HOST}" ollama pull "$${pm_name}"; then
+              echo "Model '$${pm_name}' pulled successfully."
               return 0
             fi
             if [ "$${attempt}" -lt 3 ]; then
