@@ -6,6 +6,7 @@ import re
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import fitz
@@ -18,6 +19,7 @@ from ai_extraction import (
     _ALL_FIELDS as AI_ALL_FIELDS,
     _CORE_FIELDS as AI_CORE_FIELDS,
     extract_fields_with_ai,
+    invalidate_template_cache,
 )
 from barcode_scanner import scan_barcodes
 from image_preprocessing import binarize_image, preprocess_title_image
@@ -1871,6 +1873,229 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 ),
             }
         )
+
+    # ── State layout editor ───────────────────────────────────────────────────
+
+    def _render_pdf_page_to_png(file_bytes: bytes, page_index: int = 0, dpi: int = 150) -> Optional[bytes]:
+        """Render one PDF page to PNG bytes using PyMuPDF.
+
+        Returns PNG bytes or None on any failure.
+        """
+        try:
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                if page_index < 0 or page_index >= doc.page_count:
+                    return None
+                page = doc[page_index]
+                mat = fitz.Matrix(dpi / 72, dpi / 72)
+                pixmap = page.get_pixmap(matrix=mat)
+                return pixmap.tobytes("png")
+        except Exception:
+            return None
+
+    @app.route("/layout-editor")
+    def layout_editor():
+        """Render the state layout editor page."""
+        state = request.args.get("state", "").strip().upper()[:2]
+        if state and not re.fullmatch(r"[A-Z]{2}", state):
+            state = ""
+        return render_template("layout_editor.html", initial_state=state)
+
+    @app.route("/api/layout/<state>")
+    def api_get_layout(state: str):
+        """Return the existing state template JSON, or {} when none exists."""
+        if not re.fullmatch(r"[A-Za-z]{2}", state):
+            return jsonify({"error": "Invalid state code."}), 400
+        # Resolve path and confirm it stays within the templates directory.
+        templates_dir = (Path(__file__).parent / "state_templates").resolve()
+        template_path = (templates_dir / f"{state.upper()}.json").resolve()
+        if template_path.parent != templates_dir:
+            return jsonify({"error": "Invalid state code."}), 400
+        if not template_path.exists():
+            return jsonify({}), 200
+        try:
+            return jsonify(json.loads(template_path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            return jsonify({"error": "Failed to read template."}), 500
+
+    @app.route("/api/layout/<state>", methods=["POST"])
+    def api_save_layout(state: str):
+        """Save a state template JSON to state_templates/<STATE>.json.
+
+        Accepts a JSON body that mirrors the existing state_templates format:
+        {
+            "state": "XX",
+            "state_name": "...",
+            "layout_version": "1",
+            "fields": {
+                "<field_name>": {
+                    "regions": [{"left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0}],
+                    "label_hints": ["LABEL1", ...]
+                },
+                ...
+            }
+        }
+        Also invalidates the in-process template cache so subsequent AI
+        extractions immediately benefit from the new layout.
+        """
+        if not re.fullmatch(r"[A-Za-z]{2}", state):
+            return jsonify({"error": "Invalid state code."}), 400
+
+        data = request.get_json(silent=True)
+        if not data or not isinstance(data, dict):
+            return jsonify({"error": "Request body must be a JSON object."}), 400
+
+        if "fields" not in data or not isinstance(data["fields"], dict):
+            return jsonify({"error": "Template must include a 'fields' object."}), 400
+
+        # Validate field names against the allowed set.
+        allowed_fields = set(_FIELD_NAMES)
+        unknown = [f for f in data["fields"] if f not in allowed_fields]
+        if unknown:
+            return jsonify({"error": f"Unknown field name(s): {', '.join(unknown)}"}), 400
+
+        # Validate region coordinates.
+        for field_name, fdata in data["fields"].items():
+            if not isinstance(fdata, dict):
+                return jsonify({"error": f"Field '{field_name}' must be an object."}), 400
+            for i, region in enumerate(fdata.get("regions", [])):
+                for key in ("left", "top", "right", "bottom"):
+                    val = region.get(key)
+                    if not isinstance(val, (int, float)) or not (0.0 <= val <= 1.0):
+                        return jsonify(
+                            {"error": f"Field '{field_name}' region[{i}].{key} must be a float between 0 and 1."}
+                        ), 400
+
+        # Normalise: enforce state key equals URL parameter.
+        data["state"] = state.upper()
+
+        # The state value is validated above to contain only two ASCII letters, so
+        # constructing a path from it is safe.  We resolve and confirm the final
+        # path is inside the templates directory as an extra defence-in-depth layer.
+        templates_dir = (Path(__file__).parent / "state_templates").resolve()
+        template_path = (templates_dir / f"{state.upper()}.json").resolve()
+        if template_path.parent != templates_dir:
+            return jsonify({"error": "Invalid state code."}), 400
+
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            template_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            return jsonify({"error": "Failed to write template. Check server filesystem permissions."}), 500
+
+        # Evict from in-process cache so next extraction picks up the new layout.
+        invalidate_template_cache(state.upper())
+
+        return jsonify({
+            "saved": True,
+            "state": state.upper(),
+            "fields": list(data["fields"].keys()),
+        })
+
+    @app.route("/api/layout-editor/upload", methods=["POST"])
+    def layout_editor_upload():
+        """Upload a title document for use in the layout editor.
+
+        Saves the original file and renders page 1 of PDFs to a PNG so the
+        browser can display it without needing PDF.js.  For image uploads the
+        original is served directly.
+
+        Returns:
+            {
+                "original_filename": "<uuid>.<ext>",
+                "url": "/uploads/<uuid>.png",  # rendered first page
+                "page_count": <int>,
+                "type": "pdf" | "image"
+            }
+        """
+        upload = request.files.get("file")
+        if not upload or not upload.filename:
+            return jsonify({"error": "No file provided."}), 400
+        if not allowed_file(upload.filename):
+            return jsonify({"error": "Unsupported file type."}), 400
+
+        file_bytes = upload.read()
+        if not file_bytes:
+            return jsonify({"error": "Uploaded file is empty."}), 400
+
+        ext = _detect_file_extension(file_bytes)
+        page_count = 1
+
+        if ext == "pdf":
+            # Save the original PDF for page navigation.
+            orig_path = _save_upload(file_bytes, upload.filename or "upload")
+            if orig_path is None:
+                return jsonify({"error": "Failed to save file."}), 500
+            # Count pages using a context manager for reliable cleanup.
+            try:
+                with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                    page_count = doc.page_count
+            except Exception:
+                page_count = 1
+            # Render page 1.
+            rendered = _render_pdf_page_to_png(file_bytes, page_index=0)
+            if rendered is None:
+                return jsonify({"error": "Failed to render PDF page."}), 500
+            rendered_path = _save_upload(rendered, "page.png")
+            if rendered_path is None:
+                return jsonify({"error": "Failed to save rendered page."}), 500
+            return jsonify({
+                "original_filename": os.path.basename(orig_path),
+                "url": f"/uploads/{os.path.basename(rendered_path)}",
+                "page_count": page_count,
+                "type": "pdf",
+            })
+        else:
+            saved_path = _save_upload(file_bytes, upload.filename or "upload")
+            if saved_path is None:
+                return jsonify({"error": "Failed to save file."}), 500
+            return jsonify({
+                "original_filename": os.path.basename(saved_path),
+                "url": f"/uploads/{os.path.basename(saved_path)}",
+                "page_count": 1,
+                "type": "image",
+            })
+
+    @app.route("/api/layout-editor/page/<filename>")
+    def layout_editor_page(filename: str):
+        """Render an arbitrary page of a saved PDF to PNG and return its URL.
+
+        Only UUID-based filenames (generated by _save_upload) are accepted to
+        prevent directory traversal.
+        Query parameters:
+            page – 1-based page number (default: 1)
+        """
+        # Strict allowlist: only UUID hex filenames with known safe image/document extensions.
+        if not re.fullmatch(r"[0-9a-f]{32}\.(pdf|png|jpg|jpeg|tif|tiff|bmp|bin)", filename):
+            return jsonify({"error": "File not found."}), 404
+
+        try:
+            page_num = max(1, int(request.args.get("page", "1")))
+        except (TypeError, ValueError):
+            page_num = 1
+
+        # Resolve the real path and confirm it remains inside UPLOADS_DIR.
+        uploads_real = os.path.realpath(UPLOADS_DIR)
+        file_path = os.path.realpath(os.path.join(UPLOADS_DIR, filename))
+        if not file_path.startswith(uploads_real + os.sep) and file_path != uploads_real:
+            return jsonify({"error": "File not found."}), 404
+        if not os.path.isfile(file_path):
+            return jsonify({"error": "File not found."}), 404
+
+        try:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+        except OSError:
+            return jsonify({"error": "Failed to read file."}), 500
+
+        rendered = _render_pdf_page_to_png(file_bytes, page_index=page_num - 1)
+        if rendered is None:
+            return jsonify({"error": f"Page {page_num} could not be rendered."}), 500
+
+        rendered_path = _save_upload(rendered, "page.png")
+        if rendered_path is None:
+            return jsonify({"error": "Failed to save rendered page."}), 500
+
+        return jsonify({"url": f"/uploads/{os.path.basename(rendered_path)}"})
 
     return app
 
