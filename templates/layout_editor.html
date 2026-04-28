@@ -625,23 +625,24 @@ function renderBoxList() {
     const fieldOptions = FIELD_NAMES.map(f =>
       `<option value="${f}" ${f === m.field ? 'selected' : ''}>${FIELD_LABELS[f] || f}</option>`
     ).join('');
+    const numId = parseInt(box.id, 10);  // ensure integer for safe inline handler
 
     return `
-      <tr id="box-row-${box.id}">
-        <td><span class="box-num">${box.id}</span></td>
+      <tr id="box-row-${numId}">
+        <td><span class="box-num">${numId}</span></td>
         <td>
-          <select onchange="setBoxField(${box.id}, this.value)">
+          <select onchange="setBoxField(${numId}, this.value)">
             ${fieldOptions}
           </select>
         </td>
         <td>
           <input type="text" value="${escHtml(hintsStr)}"
                  placeholder="TITLE NO, TITLE NUMBER"
-                 oninput="setBoxHints(${box.id}, this.value)"
+                 oninput="setBoxHints(${numId}, this.value)"
                  title="Comma-separated label hints used in the AI prompt">
         </td>
         <td>
-          <button class="btn-sm btn-danger" onclick="deleteBox(${box.id})" title="Delete box">🗑</button>
+          <button class="btn-sm btn-danger" onclick="deleteBox(${numId})" title="Delete box">🗑</button>
         </td>
       </tr>`;
   }).join('');
@@ -695,7 +696,7 @@ function buildTemplate() {
   const layoutVersion = document.getElementById('layout-version-input').value.trim() || '1';
 
   if (!state || !/^[A-Z]{2}$/.test(state)) {
-    throw new Error('Enter a valid 2-letter state abbreviation.');
+    throw new Error('State abbreviation must be exactly 2 uppercase letters (e.g., NM, CA).');
   }
   if (!canvasW || !canvasH) {
     throw new Error('Upload a document first so coordinates can be normalised.');

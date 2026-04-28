@@ -1896,6 +1896,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
     def layout_editor():
         """Render the state layout editor page."""
         state = request.args.get("state", "").strip().upper()[:2]
+        if state and not re.fullmatch(r"[A-Z]{2}", state):
+            state = ""
         return render_template("layout_editor.html", initial_state=state)
 
     @app.route("/api/layout/<state>")
@@ -1903,7 +1905,11 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         """Return the existing state template JSON, or {} when none exists."""
         if not re.fullmatch(r"[A-Za-z]{2}", state):
             return jsonify({"error": "Invalid state code."}), 400
-        template_path = Path(__file__).parent / "state_templates" / f"{state.upper()}.json"
+        # Resolve path and confirm it stays within the templates directory.
+        templates_dir = (Path(__file__).parent / "state_templates").resolve()
+        template_path = (templates_dir / f"{state.upper()}.json").resolve()
+        if template_path.parent != templates_dir:
+            return jsonify({"error": "Invalid state code."}), 400
         if not template_path.exists():
             return jsonify({}), 200
         try:
@@ -2058,8 +2064,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         Query parameters:
             page – 1-based page number (default: 1)
         """
-        # Strict allowlist: only UUID hex filenames with a short extension.
-        if not re.fullmatch(r"[0-9a-f]{32}\.[a-z0-9]{1,8}", filename):
+        # Strict allowlist: only UUID hex filenames with known safe image/document extensions.
+        if not re.fullmatch(r"[0-9a-f]{32}\.(pdf|png|jpg|jpeg|tif|tiff|bmp|bin)", filename):
             return jsonify({"error": "File not found."}), 404
 
         try:
