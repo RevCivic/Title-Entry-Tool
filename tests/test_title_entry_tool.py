@@ -80,8 +80,8 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual("ABC1234", params[1])
         self.assertEqual("1HGCM82633A004352", params[2])
         self.assertEqual(2003, params[3])
-        # is_validated is at index 28 (14 core + 11 new operational + state_layout_version
-        # + source_file_path + ocr_text = 28)
+        # is_validated is at index 28 (4 core + 10 NMVITIS extended + 11 operational
+        # + state_layout_version + source_file_path + ocr_text = indices 0-27, then 28)
         self.assertEqual(1, params[28])  # is_validated
 
     def test_insert_title_record_marks_invalid_record(self) -> None:

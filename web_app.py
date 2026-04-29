@@ -1119,7 +1119,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             except ValueError:
                 return None
 
-        state = (_form_str("state") or app.config["DEFAULT_STATE"]).strip().upper()
+        state = (_form_str("state") or app.config["DEFAULT_STATE"]).upper()
         title_number = _form_str("title_number") or ""
         vin = _form_str("vin") or ""
         vehicle_year = _form_int("vehicle_year") or MISSING_YEAR_SENTINEL

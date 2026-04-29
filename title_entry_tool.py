@@ -514,7 +514,7 @@ def list_records(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """Return a page of title records ordered by COALESCE(sort_order, id) DESC."""
+    """Return a page of title records ordered by id DESC (newest first)."""
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(
             """

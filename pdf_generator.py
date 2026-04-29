@@ -200,8 +200,11 @@ def generate_nmvitis_pdf(
 #   "Pennsylvania and/or …{nn}" – title/certificate number
 #   "Enter first eight …{nn}"   – first 8 chars of owner last name / business name
 #   "Date flattened …{nn}"      – date processed
-# Header fields: Text1 (business name), Text2 (MV agent number),
-#   "Street Address City State Zip Code" (dealer address).
+# Header fields:
+#   Text1 – licensed dealer/business name (plant_name)
+#   Text2 – MV agent/license number (dismantler_license)
+#   Text3 – NMVITIS provider ID (provider_id)
+#   "Street Address City State Zip Code" – dealer address
 _MV7_TITLE_NUMBER_FIELD = (
     "Pennsylvania andor OutofState Certificate of TitleSalvage or "
     "Pennsylvania Nonrepairable Certificate Number Do not include letter{nn}"
