@@ -35,6 +35,15 @@
           hamburger.setAttribute('aria-expanded', 'false');
         }
       });
+
+      /* Close drawer on Escape key (accessibility) */
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && navLinks.classList.contains('open')) {
+          navLinks.classList.remove('open');
+          hamburger.setAttribute('aria-expanded', 'false');
+          hamburger.focus();
+        }
+      });
     }
 
     /* ── Flash auto-dismiss ───────────────────────────────────────────── */
