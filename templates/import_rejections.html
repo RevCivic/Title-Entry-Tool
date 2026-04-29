@@ -1,69 +1,75 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Import NMVITIS Rejections</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
-  h1 { color: #003366; }
-  .toolbar { margin-bottom: 1rem; }
-  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
-               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
-  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
-          padding: 1.5rem; max-width: 600px; }
-  .card h2 { margin-top: 0; color: #003366; font-size: 1rem; }
-  .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;
-          padding: 0.75rem 1rem; font-size: 0.85rem; margin-bottom: 1rem; }
-  label { display: block; font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
-  input[type=file] { padding: 0.4rem; font-size: 0.9rem; }
-  .btn { margin-top: 1rem; padding: 0.5rem 1.2rem; background: #b45309; color: white;
-         border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; font-weight: bold; }
-  .btn:hover { background: #92400e; }
-  #result { margin-top: 1rem; font-size: 0.9rem; font-weight: bold; }
-</style>
-</head>
-<body>
-<h1>📥 Import NMVITIS Rejections</h1>
+{% extends "base.html" %}
+{% set active_page = 'records' %}
 
-<div class="toolbar">
-  <a href="/review">⬅ Back to Review List</a>
-  <a href="/help">❓ Help</a>
-</div>
+{% block title %}Import NMVITIS Rejections | NMVITIS Title Entry Tool{% endblock %}
 
-<div class="card">
-  <h2>Upload NMVITIS Rejection CSV</h2>
-  <div class="info">
-    Upload the rejection CSV file exported from NMVITIS. Records with
-    matching VINs will be flagged for correction. The CSV must contain a
-    <code>vin</code> column; optional columns: <code>error_field</code>,
-    <code>error_message</code>.
+{% block content %}
+<div class="page-wrap">
+
+  <div class="page-heading">
+    <h1>&#128229; Import NMVITIS Rejections</h1>
+    <p class="page-hint">
+      Upload a rejection CSV from NMVITIS to flag records that need correction.
+    </p>
   </div>
 
-  <form id="rejection-form" enctype="multipart/form-data">
-    <label>Select CSV File
-      <input type="file" name="file" accept=".csv" required>
-    </label>
-    <button type="button" class="btn" onclick="uploadRejections()">⬆ Import Rejections</button>
-  </form>
-  <div id="result"></div>
-</div>
+  <div class="info-banner" role="note">
+    Upload the rejection CSV file exported from NMVITIS. Records with matching
+    VINs will be flagged for correction. The CSV must contain a <code>vin</code>
+    column; optional columns: <code>error_field</code>, <code>error_message</code>.
+  </div>
 
+  <div class="card" style="max-width:600px;">
+    <h2>Upload Rejection CSV</h2>
+
+    <div class="step-guide">
+      <ol>
+        <li><strong>Step 1:</strong> Export the rejection file from NMVITIS as a CSV.</li>
+        <li><strong>Step 2:</strong> Select the CSV file below.</li>
+        <li><strong>Step 3:</strong> Click <em>Import Rejections</em> to flag matching
+          records.</li>
+        <li><strong>Step 4:</strong> Return to <a href="/review">Records</a> and correct
+          the flagged records, then re-export the CSV.</li>
+      </ol>
+    </div>
+
+    <form id="rejection-form" enctype="multipart/form-data">
+      <div class="form-field">
+        <label for="rejection-file">Select CSV File <span style="color:#c0392b;">*</span></label>
+        <input type="file" id="rejection-file" name="file" accept=".csv" required />
+        <p class="field-hint">Must be a CSV file with at least a <code>vin</code> column.</p>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-warning"
+                onclick="uploadRejections()">
+          &#8593; Import Rejections
+        </button>
+        <a href="/review" class="btn btn-ghost">&#8592; Back to Records</a>
+      </div>
+    </form>
+
+    <div id="result" style="margin-top:0.75rem;font-size:0.9rem;font-weight:700;"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
 async function uploadRejections() {
-  const form = document.getElementById('rejection-form');
-  const data = new FormData(form);
-  const resp = await fetch('/import-rejections', { method: 'POST', body: data });
-  const json = await resp.json();
-  const el = document.getElementById('result');
+  var form = document.getElementById('rejection-form');
+  var data = new FormData(form);
+  var resp = await fetch('/import-rejections', { method: 'POST', body: data });
+  var json = await resp.json();
+  var el   = document.getElementById('result');
   if (resp.ok) {
-    el.style.color = '#15803d';
+    el.style.color = 'var(--badge-ok-text)';
     el.textContent = '✔ ' + json.corrections_created + ' records flagged for correction.';
   } else {
-    el.style.color = '#991b1b';
+    el.style.color = 'var(--badge-err-text)';
     el.textContent = 'Error: ' + (json.error || 'Unknown error');
   }
 }
 </script>
-</body>
-</html>
+{% endblock %}

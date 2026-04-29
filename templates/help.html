@@ -1,468 +1,294 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Help – Title Entry Tool</title>
-    <style>
-      /* ── Reset / base ──────────────────────────────────────────────────── */
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: Arial, sans-serif;
-        font-size: 0.9375rem;
-        background: #f0f2f5;
-        color: #222;
-        padding: 1.5rem 1rem 3rem;
-      }
+{% extends "base.html" %}
+{% set active_page = 'help' %}
 
-      /* ── Layout ────────────────────────────────────────────────────────── */
-      .page { max-width: 960px; margin: 0 auto; display: grid; gap: 1.25rem; }
+{% block title %}Help & How-To Guide | NMVITIS Title Entry Tool{% endblock %}
 
-      /* ── Card ──────────────────────────────────────────────────────────── */
-      .card {
-        background: #fff;
-        border: 1px solid #d9dde3;
-        border-radius: 8px;
-        padding: 1.25rem 1.5rem;
-      }
-      .card-title {
-        font-size: 0.8125rem;
-        font-weight: 700;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-        color: #666;
-        margin-bottom: 1rem;
-      }
+{% block content %}
+<div class="page-wrap">
 
-      /* ── Page header ───────────────────────────────────────────────────── */
-      .page-header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: .5rem;
-      }
-      .page-header h1 { font-size: 1.5rem; }
+  <div class="page-heading">
+    <h1>&#10067; Help &amp; How-To Guide</h1>
+    <p class="page-hint">
+      Step-by-step instructions for every feature of the NMVITIS Title Entry Tool.
+    </p>
+  </div>
 
-      /* ── Nav links ─────────────────────────────────────────────────────── */
-      .nav-links {
-        display: flex;
-        gap: 1rem;
-        flex-wrap: wrap;
-        align-items: center;
-        font-size: 0.875rem;
-      }
-      .nav-links a {
-        font-size: .8rem;
-        color: #0d6efd;
-        text-decoration: none;
-        font-weight: 600;
-      }
-      .nav-links a:hover { text-decoration: underline; }
+  <!-- ── Overview ──────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Overview</div>
+    <p style="font-size:0.9rem;line-height:1.65;">
+      The <strong>Title Entry Tool</strong> digitizes vehicle title documents by extracting
+      the 14 NMVITIS fields (state, title number, VIN, year, make, model, body style,
+      color, odometer, owner name, owner address, purchase price, sale date, and issue date)
+      from uploaded PDFs or images. Extraction can use OCR (Tesseract), AI (Ollama),
+      or a hybrid of both. After extraction, records are reviewed, corrected, exported
+      as NMVITIS CSV, and optionally used as training data to improve future AI extractions.
+    </p>
+    <div class="note-callout" style="margin-top:0.9rem;">
+      <strong>Typical workflow:</strong>
+      Upload title &rarr; Review &amp; correct extracted fields &rarr; Enter back-of-title
+      data &rarr; Export CSV &rarr; (Optional) Mark corrections as ground truth for training.
+    </div>
+    <div class="card-title" style="margin-top:1.25rem;margin-bottom:0.5rem;">
+      Jump to section
+    </div>
+    <ul class="toc-grid">
+      <li><a href="#upload">1. Uploading a Title</a></li>
+      <li><a href="#review-list">2. Review Records List</a></li>
+      <li><a href="#review-record">3. Review &amp; Correct a Record</a></li>
+      <li><a href="#back-of-title">4. Back of Title</a></li>
+      <li><a href="#annotation-queue">5. Annotation Queue</a></li>
+      <li><a href="#import-rejections">6. Import NMVITIS Rejections</a></li>
+      <li><a href="#training">7. Training Dashboard</a></li>
+      <li><a href="#diagnostics">8. Diagnostics</a></li>
+      <li><a href="#quick-ref">9. Quick Reference</a></li>
+    </ul>
+  </div>
 
-      /* ── Section heading ───────────────────────────────────────────────── */
-      .section-heading {
-        font-size: 1rem;
-        font-weight: 700;
-        color: #003366;
-        margin-bottom: .75rem;
-        display: flex;
-        align-items: center;
-        gap: .5rem;
-      }
-      .section-heading a {
-        font-size: .75rem;
-        font-weight: 600;
-        color: #0d6efd;
-        text-decoration: none;
-        margin-left: auto;
-      }
-      .section-heading a:hover { text-decoration: underline; }
+  <!-- ── 1. Upload ──────────────────────────────────────────────────────── -->
+  <div class="card" id="upload">
+    <div class="section-heading">
+      <span>&#8593; 1. Uploading a Title</span>
+      <a href="/">Go to Upload page &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>Navigate to the <strong>Home</strong> page (<code>/</code>).</li>
+      <li>
+        <strong>(Optional)</strong> Enter a two-letter <em>State override</em>
+        (e.g. <code>NM</code>) if the document&rsquo;s state cannot be detected
+        automatically.
+      </li>
+      <li>Click <strong>Choose File</strong> and select a PDF, PNG, JPG, TIFF, BMP,
+          or WebP file (max 16 MB).</li>
+      <li>
+        <strong>(Optional)</strong> Check <em>Enter data manually (skip OCR/AI)</em>
+        to type all fields yourself instead of running automated extraction.
+      </li>
+      <li>Click <strong>&uarr; Extract and Save</strong>. The tool runs OCR and/or AI
+          extraction and saves a new record.</li>
+      <li>Review the <em>Extracted Fields</em> and <em>Extraction Details</em> cards.
+          Fields with low confidence should be verified.</li>
+      <li>Click <strong>&#128203; Records</strong> in the nav to open the record list,
+          or <strong>&#128270; Annotate</strong> for the annotation queue.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>AI status indicator:</strong> The coloured dot in the navigation bar shows
+      whether the AI model is ready (green), downloading (yellow pulse), unavailable (red),
+      or not configured (grey). A warning dialog will appear before submission if yellow
+      or red &mdash; you can continue with OCR-only extraction or wait.
+    </div>
+  </div>
 
-      /* ── Steps ─────────────────────────────────────────────────────────── */
-      ol.steps {
-        padding-left: 1.25rem;
-        line-height: 1.7;
-        font-size: .9rem;
-        color: #333;
-      }
-      ol.steps li { margin-bottom: .35rem; }
-      ol.steps li:last-child { margin-bottom: 0; }
+  <!-- ── 2. Review Records List ─────────────────────────────────────────── -->
+  <div class="card" id="review-list">
+    <div class="section-heading">
+      <span>&#128203; 2. Review Records List</span>
+      <a href="/review">Go to Records &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>Click <strong>&#128203; Records</strong> in the navigation bar.</li>
+      <li>The table lists all saved records. Each row shows ID, state, title number,
+          VIN, year, make/model, validation status, and upload date.</li>
+      <li>Click <strong>&#9999; Review</strong> on any row to open that record&rsquo;s
+          detail page.</li>
+      <li>Click <strong>&#128260; Back</strong> to open back-of-title entry.</li>
+      <li>Click <strong>&#8595; PDF</strong> to download a generated NMVITIS PDF.</li>
+      <li>Use the <em>From</em> / <em>To</em> date pickers then click
+          <strong>&#8595; Download NMVITIS CSV</strong> to export validated records.</li>
+      <li>Use the <strong>Previous</strong> / <strong>Next</strong> pager to navigate
+          pages.</li>
+    </ol>
+  </div>
 
-      /* ── Note callout ──────────────────────────────────────────────────── */
-      .note {
-        background: #eff6ff;
-        border: 1px solid #bfdbfe;
-        border-radius: 6px;
-        padding: .6rem .9rem;
-        font-size: .85rem;
-        color: #1e3a5f;
-        margin-top: .75rem;
-        line-height: 1.55;
-      }
-      .note strong { font-weight: 700; }
+  <!-- ── 3. Review & Correct a Record ──────────────────────────────────── -->
+  <div class="card" id="review-record">
+    <div class="section-heading">
+      <span>&#9999; 3. Review &amp; Correct a Record</span>
+    </div>
+    <ol class="help-steps">
+      <li>From the Records list, click <strong>&#9999; Review</strong>.</li>
+      <li>The left panel shows all 14 NMVITIS fields as editable inputs. Fields
+          highlighted in yellow were extracted with low confidence.</li>
+      <li>The right panel displays the original title image. Use the <strong>+</strong>
+          / <strong>&minus;</strong> zoom buttons and click-drag to pan.</li>
+      <li>Edit any incorrect or missing field values.</li>
+      <li>Click <strong>Save Corrections</strong> to store changes.</li>
+      <li>Click <strong>&#10003; Mark as Ground Truth</strong> to flag current values
+          as verified training data.</li>
+      <li>Click <strong>&#10003; Approve All &amp; Mark Ground Truth</strong> to batch
+          approve all saved corrections at once.</li>
+      <li>The <em>Correction History</em> panel shows all previous corrections and
+          whether each is approved as ground truth.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>Validation:</strong> After saving, the record is automatically re-validated.
+      A green <em>Valid</em> badge means all required fields passed format checks.
+    </div>
+  </div>
 
-      /* ── Quick-reference table ──────────────────────────────────────────── */
-      .ref-table { width: 100%; border-collapse: collapse; font-size: .875rem; margin-top: .5rem; }
-      .ref-table th {
-        background: #f8f9fa;
-        font-weight: 700;
-        padding: .45rem .7rem;
-        text-align: left;
-        border: 1px solid #dee2e6;
-      }
-      .ref-table td { padding: .4rem .7rem; border: 1px solid #dee2e6; }
-      .ref-table td a { color: #0d6efd; text-decoration: none; font-weight: 600; }
-      .ref-table td a:hover { text-decoration: underline; }
+  <!-- ── 4. Back of Title ───────────────────────────────────────────────── -->
+  <div class="card" id="back-of-title">
+    <div class="section-heading">
+      <span>&#128260; 4. Back of Title</span>
+    </div>
+    <ol class="help-steps">
+      <li>From the Records list or a Review page, click <strong>&#128260; Back</strong>.</li>
+      <li>Enter the manual back-of-title data (odometer, buyer name, seller name,
+          sale price, date of sale, notes).</li>
+      <li>Click <strong>Save Back of Title</strong>.</li>
+      <li>Click <strong>&#8592; Back to Front Review</strong> to return.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>&#9888; Manual verification required:</strong> Seller and buyer
+      signatures must be verified against the physical document before submission
+      to NMVITIS.
+    </div>
+  </div>
 
-      /* ── TOC ────────────────────────────────────────────────────────────── */
-      .toc { list-style: none; padding: 0; display: grid;
-             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .4rem .75rem; }
-      .toc li a {
-        font-size: .875rem; color: #0d6efd; text-decoration: none; font-weight: 600;
-      }
-      .toc li a:hover { text-decoration: underline; }
-    </style>
-  </head>
+  <!-- ── 5. Annotation Queue ────────────────────────────────────────────── -->
+  <div class="card" id="annotation-queue">
+    <div class="section-heading">
+      <span>&#128270; 5. Annotation Queue</span>
+      <a href="/annotate">Go to Annotation Queue &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>Click <strong>&#128270; Annotate</strong> in the navigation bar.</li>
+      <li>Records are sorted with <em>least ground-truth coverage first</em> to
+          maximise AI training benefit.</li>
+      <li>Click <strong>&#9999; Annotate</strong> on any row to open the review page.</li>
+      <li>Correct fields and click <strong>&#10003; Mark as Ground Truth</strong>.</li>
+      <li>Return to the queue to continue with the next record.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>Why annotate?</strong> Ground-truth corrections teach the AI which
+      extractions are correct. The more records you annotate, the more accurate
+      future extractions will be after the next training run.
+    </div>
+  </div>
 
-  <body>
-    <div class="page">
+  <!-- ── 6. Import NMVITIS Rejections ──────────────────────────────────── -->
+  <div class="card" id="import-rejections">
+    <div class="section-heading">
+      <span>&#128229; 6. Import NMVITIS Rejections</span>
+      <a href="/import-rejections">Go to Import Rejections &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>From the Records list, click <strong>&#128229; Import Rejections</strong>.</li>
+      <li>Select the NMVITIS rejection CSV file.</li>
+      <li>Click <strong>Import</strong> to flag records matching the rejections by VIN.</li>
+      <li>Return to the Records list, correct flagged fields, and re-export.</li>
+    </ol>
+  </div>
 
-      <!-- ── Page header ─────────────────────────────────────────────────── -->
-      <div class="page-header">
-        <h1>&#10067; Help &amp; How-To Guide</h1>
-        <div class="nav-links">
-          <a href="/">&#8593; Upload</a>
-          <a href="/review">&#128203; Records</a>
-          <a href="/annotate">&#128270; Annotate</a>
-          <a href="/training">&#127981; Training</a>
-          <a href="/diagnostics">&#128202; Diagnostics</a>
-        </div>
-      </div>
+  <!-- ── 7. Training Dashboard ──────────────────────────────────────────── -->
+  <div class="card" id="training">
+    <div class="section-heading">
+      <span>&#127981; 7. Training Dashboard</span>
+      <a href="/training">Go to Training &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>Click <strong>&#127981; Training</strong> in the nav.</li>
+      <li>The <em>Coverage</em> charts show annotation progress per field and state.</li>
+      <li>Enter an optional <em>Run note</em>, then click
+          <strong>&#8595; Export Training Data (ZIP)</strong>.</li>
+      <li>Use the ZIP to fine-tune your AI model outside this application.</li>
+      <li>Use <strong>Apply to AI Model</strong> to create a custom Ollama model from
+          your corrections directly &mdash; no GPU required.</li>
+      <li>The <em>Model Management</em> section lets you switch the active model.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>Tip:</strong> Use <strong>&#10003; Approve All &amp; Mark Ground Truth</strong>
+      on the Review page to batch-approve all saved corrections for a record at once.
+    </div>
+  </div>
 
-      <!-- ── Overview ────────────────────────────────────────────────────── -->
-      <div class="card">
-        <div class="card-title">Overview</div>
-        <p style="font-size:.9rem;line-height:1.65;color:#333;">
-          The <strong>Title Entry Tool</strong> digitizes vehicle title documents by extracting
-          the 14 NMVITIS fields (state, title number, VIN, year, make, model, body style, color,
-          odometer, owner name, owner address, purchase price, sale date, and issue date) from
-          uploaded PDFs or images. Extraction can use OCR (Tesseract), AI (Ollama), or a
-          hybrid of both. After extraction, records are reviewed, corrected, exported as
-          NMVITIS CSV, and optionally used as training data to improve future AI extractions.
-        </p>
-        <div class="note" style="margin-top:.9rem;">
-          <strong>Typical workflow:</strong>
-          Upload title &rarr; Review &amp; correct extracted fields &rarr; Enter back-of-title
-          data &rarr; Export CSV &rarr; (Optional) Mark corrections as ground truth for training.
-        </div>
+  <!-- ── 8. Diagnostics ─────────────────────────────────────────────────── -->
+  <div class="card" id="diagnostics">
+    <div class="section-heading">
+      <span>&#128202; 8. Diagnostics</span>
+      <a href="/diagnostics">Go to Diagnostics &rarr;</a>
+    </div>
+    <ol class="help-steps">
+      <li>Click <strong>&#128202; Diagnostics</strong> in the nav.</li>
+      <li>The <em>AI Status</em> section shows whether the model is
+          <em>ready</em>, <em>loading</em>, <em>unavailable</em>, or
+          <em>not configured</em>.</li>
+      <li>If loading, a progress bar shows download percentage. The page
+          auto-refreshes every 5 seconds.</li>
+      <li>The <em>Services</em> section shows Docker container state for all
+          Compose services (postgres, title-entry-tool, ollama, ollama-init).</li>
+      <li>Click <strong>Start AI Services</strong> if Ollama containers are stopped.</li>
+      <li>Use per-service <strong>View Logs</strong> buttons for troubleshooting.</li>
+    </ol>
+    <div class="note-callout">
+      <strong>Extraction providers:</strong>
+      <ul style="margin-top:0.4rem;padding-left:1.1rem;line-height:1.7;font-size:0.875rem;">
+        <li><strong>tesseract</strong> &ndash; OCR only; AI is not used.</li>
+        <li><strong>ai</strong> &ndash; AI extraction only (requires Ollama).</li>
+        <li><strong>hybrid</strong> (default) &ndash; AI results where confidence is
+            high; Tesseract fills in the rest.</li>
+      </ul>
+    </div>
+  </div>
 
-        <!-- Table of contents -->
-        <div class="card-title" style="margin-top:1.25rem;margin-bottom:.5rem;">Jump to section</div>
-        <ul class="toc">
-          <li><a href="#upload">1. Uploading a Title</a></li>
-          <li><a href="#review-list">2. Review Records List</a></li>
-          <li><a href="#review-record">3. Review &amp; Correct a Record</a></li>
-          <li><a href="#back-of-title">4. Back of Title</a></li>
-          <li><a href="#annotation-queue">5. Annotation Queue</a></li>
-          <li><a href="#import-rejections">6. Import NMVITIS Rejections</a></li>
-          <li><a href="#training">7. Training Dashboard</a></li>
-          <li><a href="#diagnostics">8. Diagnostics</a></li>
-        </ul>
-      </div>
+  <!-- ── Quick Reference ───────────────────────────────────────────────── -->
+  <div class="card" id="quick-ref">
+    <div class="card-title">Quick Reference &mdash; Pages &amp; URLs</div>
+    <div class="table-scroll">
+      <table class="ref-table">
+        <thead>
+          <tr><th>Page</th><th>URL</th><th>What you can do</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><a href="/">&#8593; Upload</a></td>
+            <td><code>/</code></td>
+            <td>Upload a title document and trigger extraction</td>
+          </tr>
+          <tr>
+            <td><a href="/review">&#128203; Records</a></td>
+            <td><code>/review</code></td>
+            <td>Browse all records, export NMVITIS CSV</td>
+          </tr>
+          <tr>
+            <td>&#9999; Review Record</td>
+            <td><code>/review/&lt;id&gt;</code></td>
+            <td>Correct extracted fields, mark ground truth, download PDF</td>
+          </tr>
+          <tr>
+            <td>&#128260; Back of Title</td>
+            <td><code>/titles/&lt;id&gt;/back</code></td>
+            <td>Enter back-of-title signature data for a record</td>
+          </tr>
+          <tr>
+            <td><a href="/annotate">&#128270; Annotate</a></td>
+            <td><code>/annotate</code></td>
+            <td>Priority-sorted queue for adding ground-truth annotations</td>
+          </tr>
+          <tr>
+            <td><a href="/import-rejections">&#128229; Import Rejections</a></td>
+            <td><code>/import-rejections</code></td>
+            <td>Import NMVITIS rejection CSV from the state DMV</td>
+          </tr>
+          <tr>
+            <td><a href="/training">&#127981; Training</a></td>
+            <td><code>/training</code></td>
+            <td>View annotation coverage, export training data, manage models</td>
+          </tr>
+          <tr>
+            <td><a href="/diagnostics">&#128202; Diagnostics</a></td>
+            <td><code>/diagnostics</code></td>
+            <td>Monitor AI model status, container health, service logs</td>
+          </tr>
+          <tr>
+            <td><a href="/help">&#10067; Help</a></td>
+            <td><code>/help</code></td>
+            <td>This guide</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-      <!-- ── 1. Upload ────────────────────────────────────────────────────── -->
-      <div class="card" id="upload">
-        <div class="section-heading">
-          <span>&#8593; 1. Uploading a Title</span>
-          <a href="/">Go to Upload page &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>Navigate to the <strong>Home</strong> page (<code>/</code>).</li>
-          <li>
-            <strong>(Optional)</strong> Enter a two-letter <em>State override</em> (e.g.
-            <code>NM</code>) if the document's state cannot be detected automatically. Leave
-            blank to let the tool detect it from the title image.
-          </li>
-          <li>Click <strong>Choose File</strong> and select a PDF, PNG, JPG, TIFF, BMP, or WebP
-              file (max 16 MB).</li>
-          <li>
-            <strong>(Optional)</strong> Check <em>Enter data manually (skip OCR/AI)</em> if you
-            want to type all fields yourself instead of running automated extraction. You will be
-            taken directly to the annotation page after the file is saved.
-          </li>
-          <li>Click <strong>&uarr; Extract and Save</strong>. The tool will run OCR and/or AI
-              extraction and save a new record to the database.</li>
-          <li>Review the <em>Extracted Fields</em> and <em>Extraction Details</em> cards that
-              appear. Fields flagged in yellow have low confidence and should be verified.</li>
-          <li>Click <strong>&#128203; Records</strong> in the navigation bar to open the full
-              record list, or click <strong>&#128270; Annotate</strong> to go directly to the
-              annotation queue.</li>
-        </ol>
-        <div class="note">
-          <strong>AI status indicator:</strong> The coloured dot next to <em>AI:</em> in the
-          header shows whether the AI model is ready (green), still loading (yellow pulse),
-          unavailable (red), or not configured (grey). If yellow or red, a warning dialog will
-          appear before submission — you can continue with OCR-only extraction or wait for
-          the AI to finish loading.
-        </div>
-      </div>
-
-      <!-- ── 2. Review Records List ──────────────────────────────────────── -->
-      <div class="card" id="review-list">
-        <div class="section-heading">
-          <span>&#128203; 2. Review Records List</span>
-          <a href="/review">Go to Records &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>Click <strong>&#128203; Records</strong> in the navigation bar to open
-              <code>/review</code>.</li>
-          <li>The table lists all saved records. Each row shows the record ID, state, title
-              number, VIN, year, make/model, validation status, and upload date.</li>
-          <li>Click <strong>&#9999; Review</strong> on any row to open that record's detail
-              page where you can correct fields.</li>
-          <li>Click <strong>&#128260; Back</strong> to open the back-of-title data entry page
-              for that record.</li>
-          <li>Click <strong>&#8595; PDF</strong> to download a generated NMVITIS PDF for that
-              record.</li>
-          <li>
-            <strong>Export CSV:</strong> Use the <em>From</em> and <em>To</em> date pickers to
-            select a date range, then click <strong>&#8595; Download NMVITIS CSV</strong> to
-            export all validated records in that range as a NMVITIS-formatted CSV file.
-          </li>
-          <li>Use the <strong>Previous</strong> / <strong>Next</strong> pager links at the
-              bottom to navigate through multiple pages of records.</li>
-        </ol>
-      </div>
-
-      <!-- ── 3. Review & Correct a Record ──────────────────────────────────── -->
-      <div class="card" id="review-record">
-        <div class="section-heading">
-          <span>&#9999; 3. Review &amp; Correct a Record</span>
-        </div>
-        <ol class="steps">
-          <li>From the Records list, click <strong>&#9999; Review</strong> on a record row
-              to open <code>/review/&lt;id&gt;</code>.</li>
-          <li>The left panel shows all 14 NMVITIS fields as editable text inputs. Fields
-              highlighted in yellow were extracted with low confidence and need attention.</li>
-          <li>The right panel displays the original title image so you can visually verify
-              each field value. Use the <strong>+</strong> / <strong>−</strong> zoom buttons
-              and click-drag to pan around the image.</li>
-          <li>Edit any field values that are incorrect or missing.</li>
-          <li>Click <strong>Save Corrections</strong> to store your changes without marking
-              them as ground truth.</li>
-          <li>Click <strong>&#10003; Mark as Ground Truth</strong> to save and flag the
-              current field values as verified — these become training data for the AI.</li>
-          <li>Click <strong>&#10003; Approve All &amp; Mark Ground Truth</strong> to save and
-              approve all saved corrections for this record at once.</li>
-          <li>The <em>Correction History</em> panel on the right shows all previous corrections
-              and whether each has been approved as ground truth.</li>
-          <li>Use <strong>&#8595; Download PDF</strong> to generate and download a NMVITIS PDF
-              for this record.</li>
-          <li>Use <strong>&#128260; Back of Title</strong> to navigate to the back-of-title
-              data entry for this record.</li>
-        </ol>
-        <div class="note">
-          <strong>Validation:</strong> After saving, the record is automatically re-validated.
-          A green <em>Valid</em> badge means all required fields passed format checks. A red
-          badge lists the specific fields that failed validation.
-        </div>
-      </div>
-
-      <!-- ── 4. Back of Title ──────────────────────────────────────────────── -->
-      <div class="card" id="back-of-title">
-        <div class="section-heading">
-          <span>&#128260; 4. Back of Title</span>
-        </div>
-        <ol class="steps">
-          <li>From the Records list or a Review page, click <strong>&#128260; Back</strong>
-              (or <strong>Back of Title</strong>) for a record to open
-              <code>/titles/&lt;id&gt;/back</code>.</li>
-          <li>Upload an image or PDF of the back of the title document using the file
-              chooser, then click <strong>Save Back of Title</strong>.</li>
-          <li>Any existing back-of-title image for this record will be replaced.</li>
-          <li>Click <strong>&#8592; Back to Front Review</strong> to return to the front-of-title
-              review page for the same record.</li>
-        </ol>
-      </div>
-
-      <!-- ── 5. Annotation Queue ───────────────────────────────────────────── -->
-      <div class="card" id="annotation-queue">
-        <div class="section-heading">
-          <span>&#128270; 5. Annotation Queue</span>
-          <a href="/annotate">Go to Annotation Queue &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>Click <strong>&#128270; Annotate</strong> in the navigation bar to open
-              <code>/annotate</code>.</li>
-          <li>Records are sorted so that those with the <em>least</em> ground-truth coverage
-              appear first — focusing your effort where it will benefit AI training the most.</li>
-          <li>Each row shows the record's current fields, validation status, and how many
-              corrections have been approved as ground truth.</li>
-          <li>Click <strong>&#9999; Annotate</strong> on any row to open that record's
-              Review &amp; Correct page.</li>
-          <li>After correcting fields and clicking <strong>&#10003; Mark as Ground Truth</strong>,
-              return to the queue to continue with the next record.</li>
-          <li>Use the <strong>Previous</strong> / <strong>Next</strong> pager links to move
-              through the full queue.</li>
-        </ol>
-        <div class="note">
-          <strong>Why annotate?</strong> Ground-truth corrections teach the AI model which
-          extractions are correct. The more records you annotate, the more accurate future
-          extractions will be after the next training run.
-        </div>
-      </div>
-
-      <!-- ── 6. Import NMVITIS Rejections ──────────────────────────────────── -->
-      <div class="card" id="import-rejections">
-        <div class="section-heading">
-          <span>&#128229; 6. Import NMVITIS Rejections</span>
-          <a href="/import-rejections">Go to Import Rejections &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>From the Records list, click <strong>&#128229; Import Rejections</strong> in
-              the toolbar to open <code>/import-rejections</code>.</li>
-          <li>Click <strong>Choose File</strong> and select the NMVITIS rejection file
-              (CSV format) received from the state DMV.</li>
-          <li>Click <strong>Import</strong>. The tool will match each rejection entry to an
-              existing record by VIN and/or title number and flag the records that need
-              correction.</li>
-          <li>Return to the Records list and look for records flagged with rejection errors.
-              Open each one, correct the flagged fields, and re-export the CSV.</li>
-        </ol>
-      </div>
-
-      <!-- ── 7. Training Dashboard ─────────────────────────────────────────── -->
-      <div class="card" id="training">
-        <div class="section-heading">
-          <span>&#127981; 7. Training Dashboard</span>
-          <a href="/training">Go to Training &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>Click <strong>&#127981; Training</strong> in the navigation bar to open
-              <code>/training</code>.</li>
-          <li>The <em>Ground Truth Coverage</em> cards show how many records have been
-              annotated per field. Aim for high coverage across all 14 fields before
-              triggering an export.</li>
-          <li>The <em>Field Breakdown</em> table shows annotated vs. total record counts
-              for each NMVITIS field.</li>
-          <li>
-            To prepare a training export:
-            <ol style="margin-top:.35rem;padding-left:1.1rem;line-height:1.7;">
-              <li>Optionally enter a <em>Run note</em> in the text box to label this
-                  export (e.g. <code>April batch – NM titles</code>).</li>
-              <li>Click <strong>&#8595; Export Training Data (ZIP)</strong>. A ZIP file
-                  containing annotated images and labels will be downloaded.</li>
-              <li>Use the ZIP to fine-tune or retrain your AI model outside this
-                  application, then redeploy the updated model via the Diagnostics page.</li>
-            </ol>
-          </li>
-          <li>The <em>Export History</em> table lists all previous training exports with
-              their timestamps and run notes.</li>
-        </ol>
-        <div class="note">
-          <strong>Tip:</strong> Use <strong>&#10003; Approve All &amp; Mark Ground Truth</strong>
-          on the Review page to batch-approve all saved corrections for a record at once,
-          speeding up dataset preparation.
-        </div>
-      </div>
-
-      <!-- ── 8. Diagnostics ─────────────────────────────────────────────────── -->
-      <div class="card" id="diagnostics">
-        <div class="section-heading">
-          <span>&#128202; 8. Diagnostics</span>
-          <a href="/diagnostics">Go to Diagnostics &rarr;</a>
-        </div>
-        <ol class="steps">
-          <li>Click <strong>&#128202; Diagnostics</strong> in the navigation bar to open
-              <code>/diagnostics</code>.</li>
-          <li>The <em>AI Status</em> section shows whether the configured AI model is
-              <em>ready</em>, <em>loading</em>, <em>unavailable</em>, or
-              <em>not configured</em>.</li>
-          <li>If the status is <em>loading</em>, a progress bar shows the model download
-              percentage. The page auto-refreshes every 5 seconds.</li>
-          <li>The <em>Services</em> section displays the runtime state of all Docker
-              containers (postgres, title-entry-tool, ollama, ollama-init).</li>
-          <li>Click <strong>Start AI Services</strong> if the Ollama containers are stopped
-              and you need to enable AI extraction.</li>
-          <li>Use the per-service <strong>View Logs</strong> buttons to inspect recent
-              container logs for troubleshooting.</li>
-          <li>Click <strong>&#8592; Back to Title Entry Tool</strong> to return to the
-              Home page.</li>
-        </ol>
-        <div class="note">
-          <strong>Extraction providers:</strong>
-          <ul style="margin-top:.4rem;padding-left:1.1rem;line-height:1.7;font-size:.875rem;">
-            <li><strong>tesseract</strong> – OCR only; AI is not used.</li>
-            <li><strong>ai</strong> – AI extraction only (requires Ollama to be running).</li>
-            <li><strong>hybrid</strong> (default) – AI results are used where confidence is
-                high; Tesseract fills in the rest.</li>
-          </ul>
-          The active provider is shown in the <em>Mode</em> badge on every page header.
-        </div>
-      </div>
-
-      <!-- ── Quick Reference ───────────────────────────────────────────────── -->
-      <div class="card">
-        <div class="card-title">Quick Reference – Pages &amp; Shortcuts</div>
-        <table class="ref-table">
-          <thead>
-            <tr>
-              <th>Page</th>
-              <th>URL</th>
-              <th>What you can do</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><a href="/">&#8593; Upload</a></td>
-              <td><code>/</code></td>
-              <td>Upload a title document and trigger extraction</td>
-            </tr>
-            <tr>
-              <td><a href="/review">&#128203; Records</a></td>
-              <td><code>/review</code></td>
-              <td>Browse all records, export NMVITIS CSV</td>
-            </tr>
-            <tr>
-              <td>&#9999; Review Record</td>
-              <td><code>/review/&lt;id&gt;</code></td>
-              <td>Correct extracted fields, mark ground truth, download PDF</td>
-            </tr>
-            <tr>
-              <td>&#128260; Back of Title</td>
-              <td><code>/titles/&lt;id&gt;/back</code></td>
-              <td>Upload back-of-title image for a record</td>
-            </tr>
-            <tr>
-              <td><a href="/annotate">&#128270; Annotate</a></td>
-              <td><code>/annotate</code></td>
-              <td>Priority-sorted queue for adding ground-truth annotations</td>
-            </tr>
-            <tr>
-              <td><a href="/import-rejections">&#128229; Import Rejections</a></td>
-              <td><code>/import-rejections</code></td>
-              <td>Import NMVITIS rejection CSV from the state DMV</td>
-            </tr>
-            <tr>
-              <td><a href="/training">&#127981; Training</a></td>
-              <td><code>/training</code></td>
-              <td>View annotation coverage, export training data ZIP</td>
-            </tr>
-            <tr>
-              <td><a href="/diagnostics">&#128202; Diagnostics</a></td>
-              <td><code>/diagnostics</code></td>
-              <td>Monitor AI model status, container health, and logs</td>
-            </tr>
-            <tr>
-              <td><a href="/help">&#10067; Help</a></td>
-              <td><code>/help</code></td>
-              <td>This guide</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-    </div><!-- /.page -->
-  </body>
-</html>
+</div>
+{% endblock %}

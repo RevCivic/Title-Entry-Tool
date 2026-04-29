@@ -1,132 +1,137 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Review Title Records</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
-  h1 { color: #003366; }
-  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; }
-  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
-               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
-  .toolbar a:hover { background: #00509e; }
-  table { width: 100%; border-collapse: collapse; background: white;
-          box-shadow: 0 1px 4px rgba(0,0,0,.1); border-radius: 6px; overflow: hidden; }
-  th { background: #003366; color: white; padding: 0.6rem 0.8rem; text-align: left; font-size: 0.85rem; }
-  td { padding: 0.55rem 0.8rem; font-size: 0.85rem; border-bottom: 1px solid #e2e8f0; }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: #eef2f7; }
-  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px;
-           font-size: 0.75rem; font-weight: bold; }
-  .badge-ok { background: #d1fae5; color: #065f46; }
-  .badge-err { background: #fee2e2; color: #991b1b; }
-  .pager { margin-top: 1rem; display: flex; gap: 0.5rem; }
-  .pager a { padding: 0.4rem 0.8rem; background: #e2e8f0; border-radius: 4px;
-             text-decoration: none; color: #003366; font-size: 0.85rem; }
-  .pager a:hover { background: #cbd5e1; }
-  .export-bar { margin-bottom: 1rem; padding: 0.75rem 1rem; background: white;
-                border: 1px solid #e2e8f0; border-radius: 6px; display: flex;
-                gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-  .export-bar label { font-size: 0.85rem; color: #555; }
-  .export-bar input { padding: 0.35rem 0.5rem; border: 1px solid #ccc;
-                      border-radius: 4px; font-size: 0.85rem; }
-  .export-bar button { padding: 0.4rem 0.9rem; background: #15803d; color: white;
-                       border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-  .export-bar button:hover { background: #166534; }
-</style>
-</head>
-<body>
-<h1>📋 Review Title Records</h1>
+{% extends "base.html" %}
+{% set active_page = 'records' %}
 
-<div class="toolbar">
-  <a href="/">⬅ Upload New Title</a>
-  <a href="/records/new">➕ Add Manually</a>
-  <a href="/records/reorder">🔀 Reorder Records</a>
-  <a href="/annotate">🔍 Annotation Queue</a>
-  <a href="/training">🏭 Training</a>
-  <a href="/import-rejections">📥 Import Rejections</a>
-  <a href="/help">❓ Help</a>
-</div>
+{% block title %}Review Records | NMVITIS Title Entry Tool{% endblock %}
 
-<div class="export-bar">
-  <strong>Export CSV:</strong>
-  <label>From: <input type="date" id="date_from"></label>
-  <label>To: <input type="date" id="date_to"></label>
-  <button onclick="exportCsv()">⬇ Download NMVITIS CSV</button>
-</div>
+{% block content %}
+<div class="page-wrap">
 
-<table>
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>State</th>
-      <th>Title #</th>
-      <th>VIN</th>
-      <th>Year</th>
-      <th>Make</th>
-      <th>Model</th>
-      <th>Stock #</th>
-      <th>Location</th>
-      <th>Status</th>
-      <th>Created</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for rec in records %}
-    <tr>
-      <td>{{ rec.id }}</td>
-      <td>{{ rec.state }}</td>
-      <td>{{ rec.title_number }}</td>
-      <td style="font-family:monospace;">{{ rec.vin }}</td>
-      <td>{{ rec.vehicle_year }}</td>
-      <td>{{ rec.make or '—' }}</td>
-      <td>{{ rec.model or '—' }}</td>
-      <td>{{ rec.stock_number or '—' }}</td>
-      <td>{{ rec.location_status or '—' }}</td>
-      <td>
-        {% if rec.is_validated %}
-          <span class="badge badge-ok">Valid</span>
+  <div class="page-heading">
+    <h1>&#128203; Review Title Records</h1>
+    <p class="page-hint">
+      View, correct, and export all saved title records. Click <em>Review</em> on any
+      row to open the full record editor.
+    </p>
+  </div>
+
+  <!-- ── Quick actions ──────────────────────────────────────────────────── -->
+  <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:1rem;">
+    <a href="/records/new"      class="btn btn-ghost btn-sm">&#10133; Add Manually</a>
+    <a href="/records/reorder"  class="btn btn-ghost btn-sm">&#8645; Reorder Records</a>
+    <a href="/annotate"         class="btn btn-ghost btn-sm">&#128270; Annotation Queue</a>
+    <a href="/import-rejections" class="btn btn-ghost btn-sm">&#128229; Import Rejections</a>
+  </div>
+
+  <!-- ── CSV export bar ─────────────────────────────────────────────────── -->
+  <div class="export-bar">
+    <strong style="font-size:0.875rem;">Export CSV:</strong>
+    <label>From: <input type="date" id="date_from" /></label>
+    <label>To: <input type="date" id="date_to" /></label>
+    <button class="btn btn-success btn-sm" onclick="exportCsv()">
+      &#8595; Download NMVITIS CSV
+    </button>
+  </div>
+
+  <!-- ── Records table ──────────────────────────────────────────────────── -->
+  <div class="table-scroll table-box">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>State</th>
+          <th>Title #</th>
+          <th>VIN</th>
+          <th>Year</th>
+          <th>Make</th>
+          <th>Model</th>
+          <th>Stock #</th>
+          <th>Location</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rec in records %}
+        <tr>
+          <td>{{ rec.id }}</td>
+          <td>{{ rec.state }}</td>
+          <td>{{ rec.title_number }}</td>
+          <td style="font-family:monospace;font-size:0.8rem;">{{ rec.vin }}</td>
+          <td>{{ rec.vehicle_year }}</td>
+          <td>{{ rec.make or '—' }}</td>
+          <td>{{ rec.model or '—' }}</td>
+          <td>{{ rec.stock_number or '—' }}</td>
+          <td>{{ rec.location_status or '—' }}</td>
+          <td>
+            {% if rec.is_validated %}
+              <span class="badge badge-ok">Valid</span>
+            {% else %}
+              <span class="badge badge-err">Errors</span>
+            {% endif %}
+          </td>
+          <td style="font-size:0.78rem;color:var(--clr-text-muted);">
+            {{ rec.created_at[:10] if rec.created_at else '' }}
+          </td>
+          <td style="white-space:nowrap;font-size:0.82rem;">
+            <a href="/review/{{ rec.id }}"
+               style="color:var(--clr-primary);text-decoration:none;font-weight:600;">
+              &#9999; Review
+            </a>
+            &nbsp;|&nbsp;
+            <a href="/titles/{{ rec.id }}/back"
+               style="color:var(--clr-text-muted);text-decoration:none;">
+              &#128260; Back
+            </a>
+            &nbsp;|&nbsp;
+            <a href="/api/generate-pdf/{{ rec.id }}"
+               style="color:#b45309;text-decoration:none;">
+              &#8595; PDF
+            </a>
+            &nbsp;|&nbsp;
+            <a href="/api/generate-mv7/{{ rec.id }}"
+               style="color:#6d28d9;text-decoration:none;">
+              &#128196; MV-7
+            </a>
+          </td>
+        </tr>
         {% else %}
-          <span class="badge badge-err">Errors</span>
-        {% endif %}
-      </td>
-      <td style="font-size:0.8rem;color:#666;">{{ rec.created_at[:10] if rec.created_at else '' }}</td>
-      <td>
-        <a href="/review/{{ rec.id }}" style="color:#003366;text-decoration:none;font-size:0.85rem;">✏ Review</a>
-        &nbsp;|&nbsp;
-        <a href="/titles/{{ rec.id }}/back" style="color:#555;text-decoration:none;font-size:0.85rem;">🔄 Back</a>
-        &nbsp;|&nbsp;
-        <a href="/api/generate-pdf/{{ rec.id }}" style="color:#b45309;text-decoration:none;font-size:0.85rem;">⬇ PDF</a>
-        &nbsp;|&nbsp;
-        <a href="/api/generate-mv7/{{ rec.id }}" style="color:#6d28d9;text-decoration:none;font-size:0.85rem;">📄 MV-7</a>
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="12" style="text-align:center;color:#999;padding:2rem;">No records found.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+        <tr>
+          <td colspan="12" style="text-align:center;color:var(--clr-text-faint);padding:2rem;">
+            No records found.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 
-<div class="pager">
-  {% if offset > 0 %}
-    <a href="/review?limit={{ limit }}&offset={{ [offset - limit, 0]|max }}">← Previous</a>
-  {% endif %}
-  {% if records|length == limit %}
-    <a href="/review?limit={{ limit }}&offset={{ offset + limit }}">Next →</a>
-  {% endif %}
+  <!-- ── Pager ──────────────────────────────────────────────────────────── -->
+  <div class="pager">
+    {% if offset > 0 %}
+      <a href="/review?limit={{ limit }}&offset={{ [offset - limit, 0]|max }}">
+        &#8592; Previous
+      </a>
+    {% endif %}
+    {% if records|length == limit %}
+      <a href="/review?limit={{ limit }}&offset={{ offset + limit }}">
+        Next &#8594;
+      </a>
+    {% endif %}
+  </div>
+
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 function exportCsv() {
-  const from = document.getElementById('date_from').value;
-  const to = document.getElementById('date_to').value;
-  let url = '/export?';
+  var from = document.getElementById('date_from').value;
+  var to   = document.getElementById('date_to').value;
+  var url  = '/export?';
   if (from) url += 'date_from=' + encodeURIComponent(from) + '&';
-  if (to)   url += 'date_to=' + encodeURIComponent(to);
+  if (to)   url += 'date_to='   + encodeURIComponent(to);
   window.location.href = url;
 }
 </script>
-</body>
-</html>
+{% endblock %}

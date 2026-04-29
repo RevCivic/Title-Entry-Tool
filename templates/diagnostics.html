@@ -1,650 +1,455 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Diagnostics – Title Entry Tool</title>
-    <style>
-      /* ── Reset / base ──────────────────────────────────────────────────── */
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: Arial, sans-serif;
-        font-size: 0.9375rem;
-        background: #f0f2f5;
-        color: #222;
-        padding: 1.5rem 1rem 3rem;
-      }
+{% extends "base.html" %}
+{% set active_page = 'diagnostics' %}
 
-      /* ── Layout ────────────────────────────────────────────────────────── */
-      .page { max-width: 1000px; margin: 0 auto; display: grid; gap: 1.25rem; }
+{% block title %}Diagnostics | NMVITIS Title Entry Tool{% endblock %}
 
-      /* ── Card ──────────────────────────────────────────────────────────── */
-      .card {
-        background: #fff;
-        border: 1px solid #d9dde3;
-        border-radius: 8px;
-        padding: 1.25rem 1.5rem;
-      }
-      .card-title {
-        font-size: 0.8125rem;
-        font-weight: 700;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-        color: #666;
-        margin-bottom: 1rem;
-      }
+{% block content %}
+<div class="page-wrap">
 
-      /* ── Page header ───────────────────────────────────────────────────── */
-      .page-header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: .5rem;
-      }
-      .page-header h1 { font-size: 1.5rem; }
+  <div class="page-heading" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+    <div>
+      <h1>&#128202; Diagnostics</h1>
+      <p class="page-hint">
+        Monitor AI extraction status, container health, and service logs.
+        This page auto-refreshes every 5 seconds.
+      </p>
+    </div>
+    <div id="refresh-indicator">
+      <span class="refresh-dot"></span> Auto-refreshing every 5 s
+    </div>
+  </div>
 
-      /* ── Badge ─────────────────────────────────────────────────────────── */
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: .3rem;
-        padding: .2rem .55rem;
-        border-radius: 12px;
-        font-size: .8rem;
-        font-weight: 600;
-        white-space: nowrap;
-      }
-      .badge-ok      { background: #d4edda; color: #155724; }
-      .badge-warn    { background: #fff3cd; color: #856404; }
-      .badge-err     { background: #f8d7da; color: #721c24; }
-      .badge-info    { background: #d1ecf1; color: #0c5460; }
-      .badge-neutral { background: #e9ecef; color: #495057; }
+  <!-- ── AI Extraction Status ───────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">
+      AI Extraction Status
+      <span class="tooltip-wrap" style="margin-left:0.3rem;">
+        <span class="tooltip-icon">?</span>
+        <span class="tooltip-text">
+          Shows whether the configured Ollama AI model is ready to process
+          extractions. Status updates every 5 seconds.
+        </span>
+      </span>
+    </div>
 
-      /* ── Buttons ───────────────────────────────────────────────────────── */
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: .4rem;
-        padding: .5rem 1.1rem;
-        border: none;
-        border-radius: 5px;
-        font-size: .9rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition: filter .15s;
-        text-decoration: none;
-      }
-      .btn:hover { filter: brightness(.92); }
-      .btn:active { filter: brightness(.85); }
-      .btn:disabled { opacity: .55; cursor: default; filter: none; }
-      .btn-primary  { background: #0d6efd; color: #fff; }
-      .btn-success  { background: #198754; color: #fff; }
-      .btn-warning  { background: #ffc107; color: #212529; }
-      .btn-sm       { padding: .3rem .75rem; font-size: .8rem; }
+    <div class="actions-bar">
+      <span id="ai-status-badge" class="badge badge-neutral">checking&hellip;</span>
+      <button class="btn btn-warning btn-sm" id="refresh-ai-btn"
+              onclick="refreshAI()" title="Re-check AI status now">
+        &#8635; Refresh
+      </button>
+      <button class="btn btn-success btn-sm" id="start-ai-btn"
+              style="display:none" onclick="startAI()">
+        &#9654; Start AI Services
+      </button>
+      <button class="btn btn-primary btn-sm" id="pull-model-btn"
+              style="display:none" onclick="pullModel()">
+        &#11015; Pull Model
+      </button>
+    </div>
+    <p id="ai-action-msg"
+       style="font-size:0.8rem;min-height:1.2em;margin-bottom:0.5rem;color:var(--clr-text-muted);">
+    </p>
 
-      /* ── AI section ────────────────────────────────────────────────────── */
-      .ai-meta { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: .75rem; font-size: .875rem; }
-      .ai-meta dt { font-weight: 700; color: #555; margin-bottom: .15rem; }
-      .ai-meta dd { color: #222; font-family: monospace; }
+    <dl class="ai-meta">
+      <div>
+        <dt>Extraction Provider</dt>
+        <dd id="ai-provider">&mdash;</dd>
+      </div>
+      <div>
+        <dt>Model</dt>
+        <dd id="ai-model">&mdash;</dd>
+      </div>
+      <div>
+        <dt>Endpoint</dt>
+        <dd id="ai-endpoint">&mdash;</dd>
+      </div>
+    </dl>
 
-      /* ── Progress bar ──────────────────────────────────────────────────── */
-      .progress-wrap {
-        margin-top: .75rem;
-        background: #e9ecef;
-        border-radius: 6px;
-        height: 18px;
-        overflow: hidden;
-        position: relative;
-      }
-      .progress-bar {
-        height: 100%;
-        background: #0d6efd;
-        border-radius: 6px;
-        transition: width .4s ease;
-        min-width: 2%;
-      }
-      .progress-bar.indeterminate {
-        width: 40% !important;
-        animation: indeterminate-slide 1.4s ease-in-out infinite;
-      }
-      @keyframes indeterminate-slide {
-        0%   { margin-left: -45%; }
-        100% { margin-left: 105%; }
-      }
-      .progress-label {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: .72rem;
-        font-weight: 700;
-        color: #333;
-        pointer-events: none;
-      }
-      #pull-status-msg {
-        font-size: .8rem;
-        color: #555;
-        margin-top: .4rem;
-        min-height: 1.2em;
-        font-style: italic;
-      }
-      #pull-bytes-msg {
-        font-size: .78rem;
-        color: #777;
-        margin-top: .2rem;
-        font-family: monospace;
-      }
-
-      /* ── Operations / container grid ───────────────────────────────────── */
-      .container-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-        gap: .75rem;
-        margin-top: .75rem;
-      }
-      .svc-card {
-        border: 1px solid #d9dde3;
-        border-radius: 6px;
-        padding: .75rem 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: .4rem;
-      }
-      .svc-card .svc-name { font-weight: 700; font-size: .875rem; }
-      .svc-card .svc-actions { display: flex; gap: .4rem; margin-top: .3rem; flex-wrap: wrap; }
-
-      /* ── Log panel ─────────────────────────────────────────────────────── */
-      .log-panel {
-        margin-top: .75rem;
-        display: none;
-      }
-      .log-panel.open { display: block; }
-      .log-output {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        font-family: "Courier New", monospace;
-        font-size: .78rem;
-        line-height: 1.5;
-        padding: .75rem 1rem;
-        border-radius: 5px;
-        max-height: 380px;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        word-break: break-all;
-        margin-top: .4rem;
-      }
-      .log-toolbar {
-        display: flex;
-        gap: .5rem;
-        align-items: center;
-        flex-wrap: wrap;
-        margin-bottom: .3rem;
-        border-bottom: 1px solid #dee2e6;
-        padding-bottom: .5rem;
-      }
-      .log-svc-label { font-weight: 700; font-size: .875rem; }
-
-      /* ── Flash ─────────────────────────────────────────────────────────── */
-      .flash { padding: .6rem .9rem; border-radius: 6px; font-weight: 600; font-size: .875rem; }
-      .flash-ok  { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-      .flash-err { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-
-      /* ── Spinner ───────────────────────────────────────────────────────── */
-      @keyframes spin { to { transform: rotate(360deg); } }
-      .spinner {
-        display: inline-block;
-        width: 14px; height: 14px;
-        border: 2px solid currentColor;
-        border-top-color: transparent;
-        border-radius: 50%;
-        animation: spin .7s linear infinite;
-        vertical-align: middle;
-      }
-
-      /* ── Auto-refresh indicator ────────────────────────────────────────── */
-      #refresh-indicator {
-        font-size: .78rem;
-        color: #888;
-        display: flex;
-        align-items: center;
-        gap: .35rem;
-      }
-      .refresh-dot {
-        display: inline-block;
-        width: 8px; height: 8px;
-        border-radius: 50%;
-        background: #28a745;
-        animation: pulse-dot 2s ease-in-out infinite;
-      }
-      @keyframes pulse-dot {
-        0%, 100% { opacity: 1; }
-        50%       { opacity: .3; }
-      }
-
-      /* ── Actions bar ───────────────────────────────────────────────────── */
-      .actions-bar { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; margin-bottom: .5rem; }
-    </style>
-  </head>
-
-  <body>
-    <div class="page">
-
-      <!-- ── Page header ─────────────────────────────────────────────────── -->
-      <div class="page-header">
-        <div>
-          <h1>&#128202; Diagnostics</h1>
-          <p style="font-size:.85rem;color:#666;margin-top:.2rem">
-            <a href="/" style="color:#0d6efd;text-decoration:none">&#8592; Back to Title Entry Tool</a>
-            &nbsp;&middot;&nbsp;
-            <a href="/help" style="color:#0d6efd;text-decoration:none">&#10067; Help</a>
-          </p>
-        </div>
-        <div id="refresh-indicator">
-          <span class="refresh-dot"></span> Auto-refreshing every 5 s
+    <!-- Model download progress (shown only when loading) -->
+    <div id="pull-section" style="display:none;">
+      <div style="font-size:0.85rem;font-weight:700;margin-bottom:0.4rem;color:var(--clr-text-muted);">
+        Model Download Progress
+      </div>
+      <div class="progress-wrap" style="height:18px;">
+        <div class="progress-bar indeterminate" id="pull-bar"></div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;
+                    justify-content:center;font-size:0.72rem;font-weight:700;
+                    color:#333;pointer-events:none;" id="pull-pct-label">
         </div>
       </div>
+      <p id="pull-status-msg"></p>
+      <p id="pull-bytes-msg"></p>
+    </div>
 
-      <!-- ── AI Status ───────────────────────────────────────────────────── -->
-      <div class="card">
-        <div class="card-title">AI Extraction Status</div>
+    <!-- Pull error alert -->
+    <div id="pull-error-alert"
+         class="alert alert-err" style="display:none;margin-top:0.75rem;"></div>
+  </div>
 
-        <div class="actions-bar">
-          <span id="ai-status-badge" class="badge badge-neutral">checking&hellip;</span>
-          <button class="btn btn-warning btn-sm" id="refresh-ai-btn"
-                  onclick="refreshAI()" title="Re-check AI status now">
-            &#8635; Refresh
-          </button>
-          <button class="btn btn-success btn-sm" id="start-ai-btn"
-                  style="display:none" onclick="startAI()">
-            &#9654; Start AI Services
-          </button>
-          <button class="btn btn-primary btn-sm" id="pull-model-btn"
-                  style="display:none" onclick="pullModel()">
-            &#11015; Pull Model
-          </button>
-        </div>
-        <p id="ai-action-msg" style="font-size:.8rem;min-height:1.2em;margin-bottom:.5rem"></p>
+  <!-- ── Container Services ─────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">
+      Container Services
+      <span class="tooltip-wrap" style="margin-left:0.3rem;">
+        <span class="tooltip-icon">?</span>
+        <span class="tooltip-text">
+          Shows the runtime state of Docker containers in the Compose project.
+          Requires the Docker socket to be mounted into this container.
+        </span>
+      </span>
+    </div>
+    <p style="font-size:0.875rem;color:var(--clr-text-muted);margin-bottom:0.75rem;">
+      Click <strong>Logs</strong> on any service card to view its recent output.
+    </p>
 
-        <dl class="ai-meta">
-          <div>
-            <dt>Extraction Provider</dt>
-            <dd id="ai-provider">—</dd>
-          </div>
-          <div>
-            <dt>Model</dt>
-            <dd id="ai-model">—</dd>
-          </div>
-          <div>
-            <dt>Endpoint</dt>
-            <dd id="ai-endpoint">—</dd>
-          </div>
-        </dl>
+    <div class="container-grid" id="container-grid">
+      <div style="color:var(--clr-text-muted);font-size:0.85rem;">Loading&hellip;</div>
+    </div>
 
-        <!-- Download progress (shown only when loading) -->
-        <div id="pull-section" style="display:none">
-          <div style="font-size:.85rem;font-weight:700;margin-bottom:.4rem;color:#444">
-            Model Download Progress
-          </div>
-          <div class="progress-wrap">
-            <div class="progress-bar indeterminate" id="pull-bar"></div>
-            <div class="progress-label" id="pull-pct-label"></div>
-          </div>
-          <p id="pull-status-msg"></p>
-          <p id="pull-bytes-msg"></p>
-        </div>
-
-        <!-- Pull-error alert (shown when a manifest / file-not-found error is detected) -->
-        <div id="pull-error-alert" class="flash flash-err" style="display:none;margin-top:.75rem"></div>
+    <!-- Shared log panel -->
+    <div class="log-panel" id="log-panel">
+      <div class="log-toolbar">
+        <span class="log-svc-label" id="log-svc-label"></span>
+        <button class="btn btn-sm" style="background:#333;color:#fff"
+                onclick="refreshLogs()">&#8635; Refresh</button>
+        <button class="btn btn-sm" style="background:#555;color:#fff"
+                onclick="closeLogPanel()">&#10005; Close</button>
+        <label style="font-size:0.8rem;margin-left:auto;display:flex;align-items:center;gap:0.3rem;">
+          Lines:
+          <select id="log-lines-select" onchange="refreshLogs()"
+                  style="font-size:0.8rem;padding:0.15rem 0.3rem;width:auto;">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+        </label>
       </div>
+      <div class="log-output" id="log-output"></div>
+    </div>
+  </div>
 
-      <!-- ── Container Status ─────────────────────────────────────────────── -->
-      <div class="card">
-        <div class="card-title">Container Services</div>
-        <p style="font-size:.875rem;color:#555;margin-bottom:.75rem">
-          Click <strong>Logs</strong> on any service card to view its recent output.
-        </p>
+</div>
+{% endblock %}
 
-        <div class="container-grid" id="container-grid">
-          <div style="color:#888;font-size:.85rem">Loading&hellip;</div>
-        </div>
+{% block scripts %}
+<style>
+  .progress-wrap { position: relative; }
+</style>
+<script>
+(function () {
+  'use strict';
 
-        <!-- Shared log panel -->
-        <div class="log-panel" id="log-panel">
-          <div class="log-toolbar">
-            <span class="log-svc-label" id="log-svc-label"></span>
-            <button class="btn btn-sm" style="background:#333;color:#fff"
-                    onclick="refreshLogs()">&#8635; Refresh</button>
-            <button class="btn btn-sm" style="background:#555;color:#fff"
-                    onclick="closeLogPanel()">&#10005; Close</button>
-            <label style="font-size:.8rem;margin-left:auto;display:flex;align-items:center;gap:.3rem">
-              Lines:
-              <select id="log-lines-select" onchange="refreshLogs()"
-                      style="font-size:.8rem;padding:.15rem .3rem">
-                <option value="50">50</option>
-                <option value="100" selected>100</option>
-                <option value="200">200</option>
-                <option value="500">500</option>
-              </select>
-            </label>
-          </div>
-          <div class="log-output" id="log-output"></div>
-        </div>
-      </div>
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
+  function setBadge(el, cls, text) {
+    el.className = 'badge ' + cls;
+    el.textContent = text;
+  }
 
-    </div><!-- /.page -->
+  function fmtBytes(n) {
+    if (!n) return '0 B';
+    var units = ['B','KB','MB','GB'];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return n.toFixed(1) + ' ' + units[i];
+  }
 
-    <script>
-    (function () {
-      'use strict';
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
 
-      /* ── Helpers ──────────────────────────────────────────────────────── */
-      function setBadge(el, cls, text) {
-        el.className = 'badge ' + cls;
-        el.textContent = text;
+  /* ── AI Status ───────────────────────────────────────────────────────── */
+  var _currentAiStatus = 'unknown';
+
+  function applyAiProgress(data) {
+    var badge    = document.getElementById('ai-status-badge');
+    var startBtn = document.getElementById('start-ai-btn');
+    var pullBtn  = document.getElementById('pull-model-btn');
+    var pullSec  = document.getElementById('pull-section');
+    var bar      = document.getElementById('pull-bar');
+    var pctLbl   = document.getElementById('pull-pct-label');
+    var statusMsg = document.getElementById('pull-status-msg');
+    var bytesMsg  = document.getElementById('pull-bytes-msg');
+    var errAlert  = document.getElementById('pull-error-alert');
+
+    document.getElementById('ai-provider').textContent = data.extraction_provider || '—';
+    document.getElementById('ai-model').textContent    = data.ai_model || '—';
+    document.getElementById('ai-endpoint').textContent = data.ai_endpoint || '—';
+
+    var s = data.ai_status;
+    _currentAiStatus = s;
+
+    if (s === 'ready') {
+      setBadge(badge, 'badge-ok', '\u2713 Ready \u2014 model loaded');
+      startBtn.style.display = 'none';
+      pullBtn.style.display  = 'none';
+      pullSec.style.display  = 'none';
+      errAlert.style.display = 'none';
+    } else if (s === 'loading') {
+      var pp       = data.pull_progress;
+      var pullErr  = (pp && pp.pull_error) ? pp.pull_error : '';
+      var isMissing = data.manifest_missing || false;
+
+      if (isMissing || pullErr) {
+        setBadge(badge, 'badge-err', '\u2717 Pull Error \u2014 model manifest missing');
+        errAlert.textContent = 'Ollama pull error: ' + (pullErr || 'model manifest not found');
+        errAlert.style.display = '';
+      } else {
+        setBadge(badge, 'badge-warn', '\u25F4 Loading \u2014 model downloading\u2026');
+        errAlert.style.display = 'none';
       }
 
-      function fmtBytes(n) {
-        if (!n) return '0 B';
-        var units = ['B','KB','MB','GB'];
-        var i = 0;
-        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-        return n.toFixed(1) + ' ' + units[i];
-      }
+      startBtn.style.display = 'none';
+      pullBtn.style.display  = '';
+      pullSec.style.display  = '';
 
-      function escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-      }
-
-      /* ── AI Status ─────────────────────────────────────────────────────── */
-      var _currentAiStatus = 'unknown';
-
-      function applyAiProgress(data) {
-        var badge    = document.getElementById('ai-status-badge');
-        var startBtn = document.getElementById('start-ai-btn');
-        var pullBtn  = document.getElementById('pull-model-btn');
-        var pullSec  = document.getElementById('pull-section');
-        var bar      = document.getElementById('pull-bar');
-        var pctLbl   = document.getElementById('pull-pct-label');
-        var statusMsg= document.getElementById('pull-status-msg');
-        var bytesMsg = document.getElementById('pull-bytes-msg');
-        var errAlert = document.getElementById('pull-error-alert');
-
-        document.getElementById('ai-provider').textContent = data.extraction_provider || '—';
-        document.getElementById('ai-model').textContent    = data.ai_model || '—';
-        document.getElementById('ai-endpoint').textContent = data.ai_endpoint || '—';
-
-        var s = data.ai_status;
-        _currentAiStatus = s;
-
-        if (s === 'ready') {
-          setBadge(badge, 'badge-ok', '\u2713 Ready \u2014 model loaded');
-          startBtn.style.display = 'none';
-          pullBtn.style.display  = 'none';
-          pullSec.style.display  = 'none';
-          errAlert.style.display = 'none';
-        } else if (s === 'loading') {
-          var pp       = data.pull_progress;
-          var pullErr  = (pp && pp.pull_error) ? pp.pull_error : '';
-          var isMissing = data.manifest_missing || false;
-
-          if (isMissing || pullErr) {
-            setBadge(badge, 'badge-err', '\u2717 Pull Error \u2014 model manifest missing');
-            errAlert.textContent = 'Ollama pull error: ' + (pullErr || 'model manifest not found');
-            errAlert.style.display = '';
-          } else {
-            setBadge(badge, 'badge-warn', '\u25F4 Loading \u2014 model downloading\u2026');
-            errAlert.style.display = 'none';
-          }
-
-          startBtn.style.display = 'none';
-          pullBtn.style.display  = '';
-          pullSec.style.display  = '';
-
-          if (pp && pp.available) {
-            if (pp.percent !== null && pp.percent !== undefined) {
-              bar.classList.remove('indeterminate');
-              bar.style.width = Math.max(2, pp.percent) + '%';
-              pctLbl.textContent = pp.percent + '%';
-            } else {
-              bar.classList.add('indeterminate');
-              bar.style.width = '';
-              pctLbl.textContent = '';
-            }
-            statusMsg.textContent = pp.status_message || '';
-            if (pp.total_bytes > 0) {
-              bytesMsg.textContent =
-                fmtBytes(pp.current_bytes) + ' / ' + fmtBytes(pp.total_bytes) +
-                (pp.layers > 0 ? '  (' + pp.layers + ' layer' + (pp.layers > 1 ? 's' : '') + ')' : '');
-            } else {
-              bytesMsg.textContent = pp.layers > 0
-                ? pp.layers + ' layer' + (pp.layers > 1 ? 's' : '') + ' detected'
-                : '';
-            }
-          } else {
-            bar.classList.add('indeterminate');
-            bar.style.width = '';
-            pctLbl.textContent = '';
-            statusMsg.textContent = (pp && pp.status_message) ? pp.status_message : 'Waiting for Ollama\u2026';
-            bytesMsg.textContent  = '';
-          }
-        } else if (s === 'not_configured') {
-          setBadge(badge, 'badge-neutral', '\u2014 Not configured (OCR only)');
-          startBtn.style.display = 'none';
-          pullBtn.style.display  = 'none';
-          pullSec.style.display  = 'none';
-          errAlert.style.display = 'none';
+      if (pp && pp.available) {
+        if (pp.percent !== null && pp.percent !== undefined) {
+          bar.classList.remove('indeterminate');
+          bar.style.width = Math.max(2, pp.percent) + '%';
+          pctLbl.textContent = pp.percent + '%';
         } else {
-          /* unavailable */
-          setBadge(badge, 'badge-err', '\u26A0 Unavailable \u2014 Ollama not reachable');
-          startBtn.style.display = '';
-          pullBtn.style.display  = 'none';
-          pullSec.style.display  = 'none';
-          errAlert.style.display = 'none';
+          bar.classList.add('indeterminate');
+          bar.style.width = '';
+          pctLbl.textContent = '';
+        }
+        statusMsg.textContent = pp.status_message || '';
+        if (pp.total_bytes > 0) {
+          bytesMsg.textContent =
+            fmtBytes(pp.current_bytes) + ' / ' + fmtBytes(pp.total_bytes) +
+            (pp.layers > 0
+              ? '  (' + pp.layers + ' layer' + (pp.layers > 1 ? 's' : '') + ')'
+              : '');
+        } else {
+          bytesMsg.textContent = pp.layers > 0
+            ? pp.layers + ' layer' + (pp.layers > 1 ? 's' : '') + ' detected'
+            : '';
+        }
+      } else {
+        bar.classList.add('indeterminate');
+        bar.style.width = '';
+        pctLbl.textContent = '';
+        statusMsg.textContent = (pp && pp.status_message)
+          ? pp.status_message : 'Waiting for Ollama\u2026';
+        bytesMsg.textContent = '';
+      }
+    } else if (s === 'not_configured') {
+      setBadge(badge, 'badge-neutral', '\u2014 Not configured (OCR only)');
+      startBtn.style.display = 'none';
+      pullBtn.style.display  = 'none';
+      pullSec.style.display  = 'none';
+      errAlert.style.display = 'none';
+    } else {
+      /* unavailable */
+      setBadge(badge, 'badge-err', '\u26A0 Unavailable \u2014 Ollama not reachable');
+      startBtn.style.display = '';
+      pullBtn.style.display  = 'none';
+      pullSec.style.display  = 'none';
+      errAlert.style.display = 'none';
+    }
+  }
+
+  function refreshAI() {
+    var btn = document.getElementById('refresh-ai-btn');
+    btn.disabled = true;
+    fetch('/api/diagnostics/ai-progress')
+      .then(function (r) { return r.json(); })
+      .then(applyAiProgress)
+      .catch(function (e) {
+        setBadge(document.getElementById('ai-status-badge'), 'badge-err', '? Status error');
+        console.error('AI progress fetch error:', e);
+      })
+      .finally(function () { btn.disabled = false; });
+  }
+
+  function startAI() {
+    var btn = document.getElementById('start-ai-btn');
+    var msg = document.getElementById('ai-action-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Starting\u2026';
+    msg.textContent = '';
+
+    fetch('/api/maintenance/ai/start', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.success) {
+          msg.style.color = 'var(--badge-ok-text)';
+          msg.textContent = data.messages.join(' ') + '  Checking status\u2026';
+          setTimeout(refreshAI, 3000);
+        } else {
+          msg.style.color = 'var(--badge-err-text)';
+          msg.textContent = (data.errors || []).join(' ');
+          btn.disabled = false;
+          btn.innerHTML = '\u25B6 Start AI Services';
+        }
+      })
+      .catch(function (e) {
+        msg.style.color = 'var(--badge-err-text)';
+        msg.textContent = 'Request failed: ' + e;
+        btn.disabled = false;
+        btn.innerHTML = '\u25B6 Start AI Services';
+      });
+  }
+
+  function pullModel() {
+    var btn = document.getElementById('pull-model-btn');
+    var msg = document.getElementById('ai-action-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Pulling\u2026';
+    msg.textContent = '';
+
+    fetch('/api/maintenance/ai/pull-model', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        msg.style.color = 'var(--badge-ok-text)';
+        msg.textContent = data.message || 'Pull initiated.';
+        setTimeout(function () {
+          btn.disabled = false;
+          btn.innerHTML = '\u2B07 Pull Model';
+        }, 8000);
+        setTimeout(refreshAI, 4000);
+      })
+      .catch(function (e) {
+        msg.style.color = 'var(--badge-err-text)';
+        msg.textContent = 'Request failed: ' + e;
+        btn.disabled = false;
+        btn.innerHTML = '\u2B07 Pull Model';
+      });
+  }
+
+  window.pullModel = pullModel;
+
+  /* ── Container status ────────────────────────────────────────────────── */
+  var _openLogService = null;
+
+  var STATE_BADGE = {
+    'running':    ['badge-ok',      '\u25CF Running'],
+    'exited':     ['badge-neutral', '\u25A1 Exited'],
+    'created':    ['badge-neutral', '\u25CB Created'],
+    'restarting': ['badge-warn',    '\u21BB Restarting'],
+    'paused':     ['badge-neutral', '\u23F8 Paused'],
+    'dead':       ['badge-err',     '\u2612 Dead'],
+  };
+  var HEALTH_BADGE = {
+    'healthy':   ['badge-ok',   '\u2665 Healthy'],
+    'unhealthy': ['badge-err',  '\u2665 Unhealthy'],
+    'starting':  ['badge-warn', '\u2665 Starting'],
+  };
+
+  function renderContainers(data) {
+    var grid = document.getElementById('container-grid');
+    if (!data.docker_available) {
+      grid.innerHTML =
+        '<p style="color:var(--clr-text-muted);font-size:.85rem">' +
+        'Docker socket unavailable \u2014 container status and log features require ' +
+        'the Docker socket to be mounted into this container ' +
+        '(<code>-v /var/run/docker.sock:/var/run/docker.sock</code>). ' +
+        'The <code>COMPOSE_PROJECT_NAME</code> environment variable must also be set.</p>';
+      return;
+    }
+    var services = data.services || {};
+    var names    = Object.keys(services);
+    if (!names.length) {
+      grid.innerHTML =
+        '<p style="color:var(--clr-text-muted);font-size:.85rem">No compose containers found.</p>';
+      return;
+    }
+    var html = '';
+    names.forEach(function (svc) {
+      var info = services[svc];
+      var stateBadge, healthBadge = '';
+      if (!info) {
+        stateBadge = '<span class="badge badge-neutral">\u2014 Not started</span>';
+      } else {
+        var sb = STATE_BADGE[info.state] || ['badge-neutral', info.state];
+        stateBadge = '<span class="badge ' + sb[0] + '">' + sb[1] + '</span>';
+        if (info.health) {
+          var hb = HEALTH_BADGE[info.health] || ['badge-neutral', info.health];
+          healthBadge =
+            ' <span class="badge ' + hb[0] + '" style="font-size:.72rem">' + hb[1] + '</span>';
         }
       }
+      var isOpen = (_openLogService === svc) ? ' style="border-color:var(--clr-primary)"' : '';
+      html +=
+        '<div class="svc-card"' + isOpen + '>' +
+        '  <div class="svc-name">' + escHtml(svc) + '</div>' +
+        '  <div>' + stateBadge + healthBadge + '</div>' +
+        '  <div class="svc-actions">' +
+        '    <button class="btn btn-sm" style="background:#333;color:#fff"' +
+        '      onclick="openLogs(\'' + escHtml(svc) + '\')">' +
+        '      &#128196; Logs' +
+        '    </button>' +
+        '  </div>' +
+        '</div>';
+    });
+    grid.innerHTML = html;
+  }
 
-      function refreshAI() {
-        var btn = document.getElementById('refresh-ai-btn');
-        btn.disabled = true;
-        fetch('/api/diagnostics/ai-progress')
-          .then(function (r) { return r.json(); })
-          .then(applyAiProgress)
-          .catch(function (e) {
-            setBadge(document.getElementById('ai-status-badge'), 'badge-err', '? Status error');
-            console.error('AI progress fetch error:', e);
-          })
-          .finally(function () { btn.disabled = false; });
-      }
+  function fetchContainers() {
+    fetch('/api/maintenance/containers')
+      .then(function (r) { return r.json(); })
+      .then(renderContainers)
+      .catch(function () {
+        document.getElementById('container-grid').innerHTML =
+          '<p style="color:var(--clr-text-muted);font-size:.85rem">Could not reach maintenance API.</p>';
+      });
+  }
 
-      function startAI() {
-        var btn = document.getElementById('start-ai-btn');
-        var msg = document.getElementById('ai-action-msg');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> Starting\u2026';
-        msg.textContent = '';
+  /* ── Log panel ───────────────────────────────────────────────────────── */
+  function openLogs(svc) {
+    _openLogService = svc;
+    document.getElementById('log-svc-label').textContent = svc + ' logs';
+    document.getElementById('log-panel').classList.add('open');
+    refreshLogs();
+    fetchContainers();
+  }
+  window.openLogs = openLogs;
 
-        fetch('/api/maintenance/ai/start', { method: 'POST' })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            if (data.success) {
-              msg.style.color = '#155724';
-              msg.textContent = data.messages.join(' ') + '  Checking status\u2026';
-              setTimeout(refreshAI, 3000);
-            } else {
-              msg.style.color = '#721c24';
-              msg.textContent = (data.errors || []).join(' ');
-              btn.disabled = false;
-              btn.innerHTML = '\u25B6 Start AI Services';
-            }
-          })
-          .catch(function (e) {
-            msg.style.color = '#721c24';
-            msg.textContent = 'Request failed: ' + e;
-            btn.disabled = false;
-            btn.innerHTML = '\u25B6 Start AI Services';
-          });
-      }
+  function closeLogPanel() {
+    _openLogService = null;
+    document.getElementById('log-panel').classList.remove('open');
+    fetchContainers();
+  }
+  window.closeLogPanel = closeLogPanel;
 
-      function pullModel() {
-        var btn = document.getElementById('pull-model-btn');
-        var msg = document.getElementById('ai-action-msg');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> Pulling\u2026';
-        msg.textContent = '';
-
-        fetch('/api/maintenance/ai/pull-model', { method: 'POST' })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            msg.style.color = '#155724';
-            msg.textContent = data.message || 'Pull initiated.';
-            // Re-enable after a short delay and begin polling for status change.
-            setTimeout(function () {
-              btn.disabled = false;
-              btn.innerHTML = '\u2B07 Pull Model';
-            }, 8000);
-            setTimeout(refreshAI, 4000);
-          })
-          .catch(function (e) {
-            msg.style.color = '#721c24';
-            msg.textContent = 'Request failed: ' + e;
-            btn.disabled = false;
-            btn.innerHTML = '\u2B07 Pull Model';
-          });
-      }
-
-      window.pullModel = pullModel;
-
-      /* ── Container status ──────────────────────────────────────────────── */
-      var _openLogService = null;
-
-      var STATE_BADGE = {
-        'running':    ['badge-ok',      '\u25CF Running'],
-        'exited':     ['badge-neutral', '\u25A1 Exited'],
-        'created':    ['badge-neutral', '\u25CB Created'],
-        'restarting': ['badge-warn',    '\u21BB Restarting'],
-        'paused':     ['badge-neutral', '\u23F8 Paused'],
-        'dead':       ['badge-err',     '\u2612 Dead'],
-      };
-
-      var HEALTH_BADGE = {
-        'healthy':   ['badge-ok',   '\u2665 Healthy'],
-        'unhealthy': ['badge-err',  '\u2665 Unhealthy'],
-        'starting':  ['badge-warn', '\u2665 Starting'],
-      };
-
-      function renderContainers(data) {
-        var grid = document.getElementById('container-grid');
-        if (!data.docker_available) {
-          grid.innerHTML =
-            '<p style="color:#666;font-size:.85rem">' +
-            'Docker socket unavailable \u2014 container status and log features require ' +
-            'the Docker socket to be mounted into this container ' +
-            '(<code>-v /var/run/docker.sock:/var/run/docker.sock</code>). ' +
-            'The <code>COMPOSE_PROJECT_NAME</code> environment variable must also be set ' +
-            'to match your Compose project so containers can be discovered by label.</p>';
-          return;
+  function refreshLogs() {
+    if (!_openLogService) return;
+    var lines = document.getElementById('log-lines-select').value;
+    var out   = document.getElementById('log-output');
+    out.textContent = 'Loading\u2026';
+    fetch('/api/maintenance/logs/' + encodeURIComponent(_openLogService) +
+          '?lines=' + lines)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) {
+          out.textContent = 'Error: ' + data.error;
+        } else if (!data.lines || !data.lines.length) {
+          out.textContent = '(no log output)';
+        } else {
+          out.textContent = data.lines.join('\n');
+          out.scrollTop   = out.scrollHeight;
         }
-        var services = data.services || {};
-        var names = Object.keys(services);
-        if (names.length === 0) {
-          grid.innerHTML = '<p style="color:#888;font-size:.85rem">No compose containers found.</p>';
-          return;
-        }
-        var html = '';
-        names.forEach(function (svc) {
-          var info = services[svc];
-          var stateBadge, healthBadge = '';
-          if (!info) {
-            stateBadge = '<span class="badge badge-neutral">\u2014 Not started</span>';
-          } else {
-            var sb = STATE_BADGE[info.state] || ['badge-neutral', info.state];
-            stateBadge = '<span class="badge ' + sb[0] + '">' + sb[1] + '</span>';
-            if (info.health) {
-              var hb = HEALTH_BADGE[info.health] || ['badge-neutral', info.health];
-              healthBadge =
-                ' <span class="badge ' + hb[0] + '" style="font-size:.72rem">' + hb[1] + '</span>';
-            }
-          }
-          var isOpen = (_openLogService === svc) ? ' style="border-color:#0d6efd"' : '';
-          html +=
-            '<div class="svc-card"' + isOpen + '>' +
-            '  <div class="svc-name">' + escHtml(svc) + '</div>' +
-            '  <div>' + stateBadge + healthBadge + '</div>' +
-            '  <div class="svc-actions">' +
-            '    <button class="btn btn-sm" style="background:#333;color:#fff"' +
-            '      onclick="openLogs(\'' + escHtml(svc) + '\')">' +
-            '      &#128196; Logs' +
-            '    </button>' +
-            '  </div>' +
-            '</div>';
-        });
-        grid.innerHTML = html;
-      }
+      })
+      .catch(function (e) { out.textContent = 'Request failed: ' + e; });
+  }
+  window.refreshLogs = refreshLogs;
 
-      function fetchContainers() {
-        fetch('/api/maintenance/containers')
-          .then(function (r) { return r.json(); })
-          .then(renderContainers)
-          .catch(function () {
-            document.getElementById('container-grid').innerHTML =
-              '<p style="color:#888;font-size:.85rem">Could not reach maintenance API.</p>';
-          });
-      }
+  /* ── Auto-refresh every 5 s ─────────────────────────────────────────── */
+  function tick() {
+    refreshAI();
+    fetchContainers();
+    if (_openLogService) refreshLogs();
+  }
 
-      /* ── Log panel ─────────────────────────────────────────────────────── */
-      function openLogs(svc) {
-        _openLogService = svc;
-        document.getElementById('log-svc-label').textContent = svc + ' logs';
-        document.getElementById('log-panel').classList.add('open');
-        refreshLogs();
-        // Re-render cards so the selected one gets highlighted
-        fetchContainers();
-      }
+  document.addEventListener('DOMContentLoaded', function () {
+    tick();
+    setInterval(tick, 5000);
+  });
 
-      window.openLogs = openLogs;
-
-      function closeLogPanel() {
-        _openLogService = null;
-        document.getElementById('log-panel').classList.remove('open');
-        fetchContainers(); // remove highlight
-      }
-
-      function refreshLogs() {
-        if (!_openLogService) return;
-        var lines = document.getElementById('log-lines-select').value;
-        var out   = document.getElementById('log-output');
-        out.textContent = 'Loading\u2026';
-        fetch('/api/maintenance/logs/' + encodeURIComponent(_openLogService) + '?lines=' + lines)
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            if (data.error) {
-              out.textContent = 'Error: ' + data.error;
-            } else if (!data.lines || data.lines.length === 0) {
-              out.textContent = '(no log output)';
-            } else {
-              out.textContent = data.lines.join('\n');
-              out.scrollTop   = out.scrollHeight;
-            }
-          })
-          .catch(function (e) { out.textContent = 'Request failed: ' + e; });
-      }
-
-      /* ── Auto-refresh ───────────────────────────────────────────────────── */
-      function tick() {
-        refreshAI();
-        fetchContainers();
-        if (_openLogService) refreshLogs();
-      }
-
-      /* ── Boot ──────────────────────────────────────────────────────────── */
-      tick();
-      // Poll every 5 s while this page is open.  When the model finishes
-      // loading the status transitions to "ready" automatically.
-      setInterval(tick, 5000);
-    }());
-    </script>
-  </body>
-</html>
+  window.refreshAI = refreshAI;
+  window.startAI   = startAI;
+}());
+</script>
+{% endblock %}
