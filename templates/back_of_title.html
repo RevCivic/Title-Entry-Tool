@@ -1,122 +1,102 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Back of Title – Record #{{ front.id }}</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
-  h1 { color: #003366; }
-  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; }
-  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
-               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
-  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
-          padding: 1.5rem; max-width: 700px; }
-  .card h2 { margin-top: 0; font-size: 1rem; color: #003366; border-bottom: 2px solid #e2e8f0;
-             padding-bottom: 0.5rem; }
-  .pre-filled { background: #f0f7ff; border: 1px solid #bfdbfe; border-radius: 6px;
-                padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; }
-  .pre-filled strong { color: #1e40af; }
-  label { display: block; font-size: 0.82rem; color: #555; margin-top: 0.85rem; }
-  input, textarea { width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc;
-                    border-radius: 4px; font-size: 0.9rem; box-sizing: border-box;
-                    margin-top: 0.2rem; }
-  textarea { resize: vertical; min-height: 70px; }
-  .manual-note { font-size: 0.78rem; color: #f59e0b; font-weight: bold;
-                 margin-top: 0.2rem; }
-  .btn-row { margin-top: 1.5rem; }
-  .btn { padding: 0.55rem 1.2rem; border: none; border-radius: 4px; cursor: pointer;
-         font-size: 0.9rem; font-weight: bold; background: #003366; color: white; }
-  .btn:hover { background: #00509e; }
-  #save-status { margin-top: 0.75rem; font-size: 0.85rem; font-weight: bold; }
-</style>
-</head>
-<body>
-<h1>🔄 Back of Title – Record #{{ front.id }}</h1>
+{% extends "base.html" %}
+{% set active_page = 'records' %}
 
-<div class="toolbar">
-  <a href="/review/{{ front.id }}">⬅ Back to Front Review</a>
-  <a href="/review">📋 Record List</a>
-  <a href="/help">❓ Help</a>
-</div>
+{% block title %}Back of Title – Record #{{ front.id }} | NMVITIS Title Entry Tool{% endblock %}
 
-<div class="card">
-  <h2>Pre-filled from Front of Title</h2>
-  <div class="pre-filled">
-    <strong>VIN:</strong> {{ front.vin }} &nbsp;|&nbsp;
-    <strong>Year:</strong> {{ front.vehicle_year }} &nbsp;|&nbsp;
-    <strong>Make:</strong> {{ front.make or '—' }} &nbsp;|&nbsp;
-    <strong>Model:</strong> {{ front.model or '—' }}
+{% block content %}
+<div class="page-wrap">
+
+  <div class="page-heading">
+    <h1>&#128260; Back of Title &ndash; Record #{{ front.id }}</h1>
+    <p class="page-hint">
+      Signature fields are not captured by AI. Enter information from the back
+      of the physical title document below, then click <em>Save</em>.
+    </p>
   </div>
 
-  <h2>Manual Entry – Back of Title</h2>
-  <p style="font-size:0.82rem;color:#666;margin-top:0;">
-    Signature fields are not captured by AI. Please enter information from
-    the back of the physical title document below.
-  </p>
+  <div class="info-banner" role="note">
+    <strong>&#9888; Manual entry required:</strong> Seller and buyer signatures
+    must be verified against the physical document before submission to NMVITIS.
+  </div>
 
-  <form id="back-form">
-    <label>Odometer at Sale (miles)
-      <input type="number" name="odometer_at_sale" min="0"
-             value="{{ back.odometer_at_sale if back else '' }}">
-    </label>
-
-    <label>Buyer Name
-      <input type="text" name="buyer_name"
-             value="{{ back.buyer_name if back else '' }}">
-    </label>
-
-    <label>Buyer Address
-      <input type="text" name="buyer_address"
-             value="{{ back.buyer_address if back else '' }}">
-    </label>
-
-    <label>Seller Name
-      <input type="text" name="seller_name"
-             value="{{ back.seller_name if back else '' }}">
-    </label>
-
-    <label>Sale Price ($)
-      <input type="text" name="sale_price"
-             value="{{ back.sale_price if back else '' }}">
-    </label>
-
-    <label>Date of Sale (YYYY-MM-DD)
-      <input type="text" name="sale_date"
-             value="{{ back.sale_date if back else '' }}">
-    </label>
-
-    <label>Notes
-      <textarea name="notes">{{ back.notes if back else '' }}</textarea>
-    </label>
-
-    <p class="manual-note">
-      ⚠ Seller and buyer signatures are manual-only. Verify the physical document
-      before submission to NMVITIS.
-    </p>
-
-    <div class="btn-row">
-      <button type="button" class="btn" onclick="saveBack()">💾 Save Back of Title</button>
+  <div class="card" style="max-width:700px;">
+    <h2>Pre-filled from Front of Title</h2>
+    <div class="pre-filled">
+      <strong>VIN:</strong> {{ front.vin }} &nbsp;&middot;&nbsp;
+      <strong>Year:</strong> {{ front.vehicle_year }} &nbsp;&middot;&nbsp;
+      <strong>Make:</strong> {{ front.make or '&mdash;' }} &nbsp;&middot;&nbsp;
+      <strong>Model:</strong> {{ front.model or '&mdash;' }}
     </div>
-    <div id="save-status"></div>
-  </form>
-</div>
 
+    <h2>Manual Entry &ndash; Back of Title</h2>
+    <form id="back-form">
+      <div class="form-field">
+        <label for="odometer_at_sale">Odometer at Sale (miles)</label>
+        <input type="number" id="odometer_at_sale" name="odometer_at_sale"
+               min="0" value="{{ back.odometer_at_sale if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="buyer_name">Buyer Name</label>
+        <input type="text" id="buyer_name" name="buyer_name"
+               value="{{ back.buyer_name if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="buyer_address">Buyer Address</label>
+        <input type="text" id="buyer_address" name="buyer_address"
+               value="{{ back.buyer_address if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="seller_name">Seller Name</label>
+        <input type="text" id="seller_name" name="seller_name"
+               value="{{ back.seller_name if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="sale_price">Sale Price ($)</label>
+        <input type="text" id="sale_price" name="sale_price"
+               value="{{ back.sale_price if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="sale_date">Date of Sale (YYYY-MM-DD)</label>
+        <input type="text" id="sale_date" name="sale_date"
+               placeholder="e.g. 2024-06-01"
+               value="{{ back.sale_date if back else '' }}" />
+      </div>
+      <div class="form-field">
+        <label for="notes">Notes</label>
+        <textarea id="notes" name="notes"
+                  >{{ back.notes if back else '' }}</textarea>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary" onclick="saveBack()">
+          &#128190; Save Back of Title
+        </button>
+        <a href="/review/{{ front.id }}" class="btn btn-ghost">
+          &#8592; Back to Front Review
+        </a>
+      </div>
+      <div id="save-status" style="font-size:0.875rem;font-weight:700;margin-top:0.5rem;"></div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
 async function saveBack() {
-  const form = document.getElementById('back-form');
-  const data = new FormData(form);
-  const resp = await fetch('/titles/{{ front.id }}/back', { method: 'POST', body: data });
-  const json = await resp.json();
-  const el = document.getElementById('save-status');
+  var form = document.getElementById('back-form');
+  var data = new FormData(form);
+  var resp = await fetch('/titles/{{ front.id }}/back', { method: 'POST', body: data });
+  var json = await resp.json();
+  var el   = document.getElementById('save-status');
   if (resp.ok && json.saved) {
-    el.style.color = '#15803d';
+    el.style.color = 'var(--badge-ok-text)';
     el.textContent = '✔ Back of title saved (ID ' + json.id + ').';
   } else {
-    el.style.color = '#991b1b';
+    el.style.color = 'var(--badge-err-text)';
     el.textContent = 'Error saving record.';
   }
 }
 </script>
-</body>
-</html>
+{% endblock %}

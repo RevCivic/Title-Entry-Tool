@@ -1,439 +1,254 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Title Entry Tool</title>
-    <style>
-      /* ── Reset / base ──────────────────────────────────────────────────── */
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: Arial, sans-serif;
-        font-size: 0.9375rem;
-        background: #f0f2f5;
-        color: #222;
-        padding: 1.5rem 1rem 3rem;
-      }
+{% extends "base.html" %}
+{% set active_page = 'upload' %}
 
-      /* ── Layout ────────────────────────────────────────────────────────── */
-      .page { max-width: 960px; margin: 0 auto; display: grid; gap: 1.25rem; }
+{% block title %}Upload Title | NMVITIS Title Entry Tool{% endblock %}
 
-      /* ── Card ──────────────────────────────────────────────────────────── */
-      .card {
-        background: #fff;
-        border: 1px solid #d9dde3;
-        border-radius: 8px;
-        padding: 1.25rem 1.5rem;
-      }
-      .card-title {
-        font-size: 0.8125rem;
-        font-weight: 700;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-        color: #666;
-        margin-bottom: 1rem;
-      }
+{% block content %}
+<div class="page-wrap">
 
-      /* ── Page header ───────────────────────────────────────────────────── */
-      .page-header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: .5rem;
-      }
-      .page-header h1 { font-size: 1.5rem; }
+  <!-- ── Page heading ──────────────────────────────────────────────────── -->
+  <div class="page-heading">
+    <h1>&#8593; Upload Title Document</h1>
+    <p class="page-hint">
+      Upload a vehicle title PDF or image. The tool will extract key fields using
+      OCR and AI, then save a record you can review and correct.
+    </p>
+  </div>
 
-      /* ── Status bar ────────────────────────────────────────────────────── */
-      #status-bar {
-        display: flex;
-        gap: 1.5rem;
-        flex-wrap: wrap;
-        align-items: center;
-        font-size: 0.875rem;
-      }
-      #status-bar .item { display: flex; align-items: center; gap: .35rem; }
+  <!-- ── Step-by-step guidance ─────────────────────────────────────────── -->
+  <div class="step-guide" role="note" aria-label="Quick-start guide">
+    <ol>
+      <li><strong>Step 1:</strong> (Optional) Enter a two-letter state code if the title's
+        state cannot be detected automatically.</li>
+      <li><strong>Step 2:</strong> Select a PDF or image file of the title document.</li>
+      <li><strong>Step 3:</strong> Click <em>Extract and Save</em> — the tool runs OCR/AI
+        and saves a new record.</li>
+      <li><strong>Step 4:</strong> Review the extracted fields and correct any errors.</li>
+    </ol>
+  </div>
 
-      /* ── Badge ─────────────────────────────────────────────────────────── */
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: .3rem;
-        padding: .2rem .55rem;
-        border-radius: 12px;
-        font-size: .8rem;
-        font-weight: 600;
-        white-space: nowrap;
-      }
-      .badge-ok      { background: #d4edda; color: #155724; }
-      .badge-warn    { background: #fff3cd; color: #856404; }
-      .badge-err     { background: #f8d7da; color: #721c24; }
-      .badge-info    { background: #d1ecf1; color: #0c5460; }
-      .badge-neutral { background: #e9ecef; color: #495057; }
+  <!-- ── Upload card ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Document Upload</div>
 
-      /* ── Form ──────────────────────────────────────────────────────────── */
-      .upload-form { display: grid; gap: .75rem; }
-      .upload-form label { display: flex; flex-direction: column; gap: .3rem; font-weight: 600; font-size: .875rem; }
-      .upload-form input[type="text"],
-      .upload-form input[type="file"] {
-        padding: .45rem .6rem;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        font-size: .9rem;
-        width: 100%;
-      }
-      .upload-form input[type="text"] { max-width: 120px; }
-
-      .upload-form input[type="checkbox"] { width: auto; margin-right: .4rem; }
-      .manual-toggle { display: flex; align-items: center; gap: .4rem; font-weight: 600; font-size: .875rem; cursor: pointer; }
-      .manual-hint { font-size: .8rem; color: #666; margin-top: -.2rem; font-weight: 400; }
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        gap: .4rem;
-        padding: .5rem 1.1rem;
-        border: none;
-        border-radius: 5px;
-        font-size: .9rem;
-        font-weight: 600;
-        cursor: pointer;
-        transition: filter .15s;
-      }
-      .btn:hover { filter: brightness(.92); }
-      .btn:active { filter: brightness(.85); }
-      .btn:disabled { opacity: .55; cursor: default; filter: none; }
-      .btn-primary  { background: #0d6efd; color: #fff; }
-      .btn-success  { background: #198754; color: #fff; }
-      .btn-warning  { background: #ffc107; color: #212529; }
-      .btn-sm       { padding: .3rem .75rem; font-size: .8rem; }
-
-      /* ── Flash messages ────────────────────────────────────────────────── */
-      .flash { padding: .7rem 1rem; border-radius: 6px; font-weight: 600; margin-top: .75rem; }
-      .flash-ok   { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-      .flash-err  { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-      .flash-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-
-      /* ── Tables ────────────────────────────────────────────────────────── */
-      table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .875rem; }
-      th, td { border: 1px solid #dee2e6; padding: .45rem .7rem; text-align: left; }
-      th { background: #f8f9fa; font-weight: 700; }
-      tr:nth-child(even) td { background: #fafafa; }
-      .conf-ok  { color: #155724; font-weight: 600; }
-      .conf-err { color: #721c24; font-weight: 600; }
-
-      /* ── Two-column results layout ─────────────────────────────────────── */
-      .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-      @media (max-width: 620px) { .results-grid { grid-template-columns: 1fr; } }
-
-      /* ── AI dot indicator ──────────────────────────────────────────────── */
-      .ai-dot {
-        display: inline-block;
-        width: 10px; height: 10px;
-        border-radius: 50%;
-        vertical-align: middle;
-        margin-right: .25rem;
-        flex-shrink: 0;
-      }
-      .ai-dot-green  { background: #28a745; }
-      .ai-dot-yellow { background: #ffc107; animation: pulse-dot 1.4s ease-in-out infinite; }
-      .ai-dot-red    { background: #dc3545; }
-      .ai-dot-grey   { background: #adb5bd; }
-      @keyframes pulse-dot {
-        0%, 100% { opacity: 1; }
-        50%       { opacity: .4; }
-      }
-
-      /* ── Spinner ───────────────────────────────────────────────────────── */
-      @keyframes spin { to { transform: rotate(360deg); } }
-      .spinner {
-        display: inline-block;
-        width: 14px; height: 14px;
-        border: 2px solid currentColor;
-        border-top-color: transparent;
-        border-radius: 50%;
-        animation: spin .7s linear infinite;
-        vertical-align: middle;
-      }
-
-      /* ── AI warning modal ──────────────────────────────────────────────── */
-      .modal-overlay {
-        display: none;
-        position: fixed; inset: 0;
-        background: rgba(0,0,0,.45);
-        z-index: 1000;
-        align-items: center;
-        justify-content: center;
-      }
-      .modal-overlay.open { display: flex; }
-      .modal-box {
-        background: #fff;
-        border-radius: 10px;
-        padding: 1.75rem 2rem;
-        max-width: 440px;
-        width: 90%;
-        box-shadow: 0 8px 32px rgba(0,0,0,.25);
-      }
-      .modal-box h2 { font-size: 1.125rem; margin-bottom: .75rem; }
-      .modal-box p  { font-size: .9rem; color: #444; margin-bottom: 1.25rem; line-height: 1.55; }
-      .modal-actions { display: flex; gap: .75rem; justify-content: flex-end; flex-wrap: wrap; }
-    </style>
-  </head>
-
-  <body>
-    <div class="page">
-
-      <!-- ── Page header ─────────────────────────────────────────────────── -->
-      <div class="page-header">
-        <h1>Title Entry Tool</h1>
-        <div id="status-bar">
-          <div class="item"><strong>Mode:</strong>&nbsp;<span id="provider-badge" class="badge badge-neutral">…</span></div>
-          <div class="item" title="AI extraction status">
-            <span id="ai-dot" class="ai-dot ai-dot-grey"></span>
-            <strong>AI:</strong>&nbsp;<span id="ai-badge" class="badge badge-neutral">checking…</span>
-          </div>
-          <div class="item">
-            <a href="/review" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#128203; Records</a>
-          </div>
-          <div class="item">
-            <a href="/annotate" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#128270; Annotate</a>
-          </div>
-          <div class="item">
-            <a href="/training" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#127981; Training</a>
-          </div>
-          <div class="item">
-            <a href="/diagnostics" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">
-              &#128202; Diagnostics
-            </a>
-          </div>
-          <div class="item">
-            <a href="/help" style="font-size:.8rem;color:#0d6efd;text-decoration:none;font-weight:600">&#10067; Help</a>
-          </div>
-        </div>
+    <form id="upload-form" method="post" enctype="multipart/form-data">
+      <div class="form-field">
+        <label for="state-input">
+          State override <span style="font-weight:400;">(optional, 2 letters)</span>
+        </label>
+        <input type="text" id="state-input" name="state" maxlength="2"
+               placeholder="e.g. NM" style="max-width:100px;" />
+        <p class="field-hint">Leave blank to let the tool detect the state automatically.</p>
       </div>
 
-      <!-- ── Upload ──────────────────────────────────────────────────────── -->
-      <div class="card">
-        <div class="card-title">Upload Title Document</div>
-        <form id="upload-form" class="upload-form" method="post" enctype="multipart/form-data">
-          <label>
-            State override (optional, 2 letters):
-            <input type="text" name="state" maxlength="2" placeholder="e.g. NM" />
-          </label>
-          <label>
-            PDF or image file:
-            <input type="file" name="file"
-              accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
-          </label>
-          <label class="manual-toggle">
-              <input type="checkbox" name="manual_entry" value="1" id="manual-entry-chk" />
-              Enter data manually (skip OCR/AI)
-            </label>
-            <div class="manual-hint" id="manual-hint" style="display:none;">
-              The file will be saved and you'll be taken directly to the annotation page.
-            </div>
-          </label>
-          <div style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;">
-            <button class="btn btn-primary" type="submit" id="submit-btn">&#8593; Extract and Save</button>
-            <a href="/records/new"
-               style="padding:0.45rem 1rem;background:#0d6efd;color:white;text-decoration:none;
-                      border-radius:4px;font-size:0.9rem;font-weight:bold;">
-              ➕ Add Record Manually
-            </a>
-          </div>
-        </form>
-
-        {% if message %}
-          <div class="flash flash-ok">&#10003; {{ message }}</div>
-        {% endif %}
-        {% if error %}
-          <div class="flash flash-err">&#9888; {{ error }}</div>
-        {% endif %}
+      <div class="form-field">
+        <label for="file-input">
+          PDF or image file <span style="color:#c0392b;">*</span>
+        </label>
+        <input type="file" id="file-input" name="file"
+               accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" required />
+        <p class="field-hint">Accepted: PDF, PNG, JPG, TIFF, BMP, WebP (max 16 MB).</p>
       </div>
 
-      <!-- ── Results ─────────────────────────────────────────────────────── -->
-      {% if fields %}
-      <div class="results-grid">
-        <div class="card">
-          <div class="card-title">Extracted Fields</div>
-          <table>
+      <div class="form-field">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-weight:700;cursor:pointer;">
+          <input type="checkbox" name="manual_entry" value="1" id="manual-entry-chk" />
+          Enter data manually (skip OCR/AI)
+        </label>
+        <p class="field-hint" id="manual-hint" style="display:none;">
+          The file will be saved and you will be taken directly to the annotation
+          page to enter all fields by hand.
+        </p>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" type="submit" id="submit-btn">
+          &#8593; Extract and Save
+        </button>
+        <a href="/records/new" class="btn btn-ghost">
+          &#10133; Add Record Manually
+        </a>
+      </div>
+    </form>
+
+    {% if message %}
+      <div class="alert alert-ok" data-autohide="8000" style="margin-top:1rem;">
+        <span>&#10003; {{ message }}</span>
+        <button class="alert-close" aria-label="Dismiss">&#10005;</button>
+      </div>
+    {% endif %}
+    {% if error %}
+      <div class="alert alert-err" style="margin-top:1rem;">
+        <span>&#9888; {{ error }}</span>
+        <button class="alert-close" aria-label="Dismiss">&#10005;</button>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Extraction results ─────────────────────────────────────────────── -->
+  {% if fields %}
+  <div class="grid-2">
+    <div class="card">
+      <h2>Extracted Fields</h2>
+      <div class="table-scroll">
+        <table>
+          <tbody>
             <tr><th>State</th><td>{{ fields.state }}</td></tr>
             <tr><th>Title Number</th><td>{{ fields.title_number }}</td></tr>
-            <tr><th>VIN</th><td>{{ fields.vin }}</td></tr>
+            <tr><th>VIN</th><td style="font-family:monospace;">{{ fields.vin }}</td></tr>
             <tr><th>Vehicle Year</th><td>{{ fields.vehicle_year }}</td></tr>
-          </table>
-        </div>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-        <div class="card">
-          <div class="card-title">Extraction Details</div>
-          {% if extraction_info %}
-          <table>
+    <div class="card">
+      <h2>Extraction Details</h2>
+      {% if extraction_info %}
+      <div class="table-scroll">
+        <table>
+          <tbody>
             <tr><th>Source</th><td>{{ extraction_info.source | upper }}</td></tr>
-          </table>
-          <br />
-          <table>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll" style="margin-top:0.75rem;">
+        <table>
+          <thead>
             <tr><th>Field</th><th>Confidence</th></tr>
+          </thead>
+          <tbody>
             {% for field, conf in extraction_info.confidence.items() %}
             <tr>
               <td>{{ field }}</td>
-              <td class="{{ 'conf-err' if field in extraction_info.low_confidence else 'conf-ok' }}">
+              <td style="color:{% if field in extraction_info.low_confidence %}#d97706{% else %}#15803d{% endif %};font-weight:700;">
                 {{ (conf * 100) | round | int }}%
               </td>
             </tr>
             {% endfor %}
-          </table>
-          {% if extraction_info.low_confidence %}
-            <div class="flash flash-warn" style="margin-top:.6rem">
-              &#9888; Low confidence on:
-              <strong>{{ extraction_info.low_confidence | join(', ') }}</strong>.
-              Please verify these fields.
-            </div>
-          {% endif %}
-          {% endif %}
-        </div>
+          </tbody>
+        </table>
       </div>
+      {% if extraction_info.low_confidence %}
+        <div class="alert alert-warn" style="margin-top:0.75rem;">
+          &#9888; Low confidence on:
+          <strong>{{ extraction_info.low_confidence | join(', ') }}</strong>.
+          Please verify on the review page.
+        </div>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
 
-      {% if record %}
-      <div class="card">
-        <div class="card-title">Validation Result</div>
-        <table>
+  {% if record %}
+  <div class="card">
+    <h2>Validation Result</h2>
+    <div class="table-scroll">
+      <table>
+        <tbody>
           <tr><th>Record ID</th><td>{{ record.id }}</td></tr>
-          <tr><th>Validated</th>
-              <td>{% if record.is_validated %}<span class="badge badge-ok">&#10003; Valid</span>{% else %}<span class="badge badge-err">&#9888; Invalid</span>{% endif %}</td>
+          <tr>
+            <th>Validated</th>
+            <td>
+              {% if record.is_validated %}
+                <span class="badge badge-ok">&#10003; Valid</span>
+              {% else %}
+                <span class="badge badge-err">&#9888; Invalid</span>
+              {% endif %}
+            </td>
           </tr>
           {% if record.validation_errors %}
           <tr><th>Errors</th><td>{{ record.validation_errors | join(', ') }}</td></tr>
           {% endif %}
-        </table>
-      </div>
-      {% endif %}
-      {% endif %}
-
-    </div><!-- /.page -->
-
-    <!-- ── AI-not-ready warning modal ─────────────────────────────────────── -->
-    <div class="modal-overlay" id="ai-warn-modal" role="dialog" aria-modal="true"
-         aria-labelledby="ai-warn-title">
-      <div class="modal-box">
-        <h2 id="ai-warn-title">&#9888; AI Not Ready</h2>
-        <p id="ai-warn-body">
-          The AI model is not ready yet. Extraction results may be incomplete or
-          unreliable until the model finishes loading. You can check progress on
-          the <a href="/diagnostics">Diagnostics page</a>.
-        </p>
-        <div class="modal-actions">
-          <button class="btn" style="background:#6c757d;color:#fff"
-                  onclick="closeAiWarning()">Cancel &mdash; Wait for AI</button>
-          <button class="btn btn-warning"
-                  onclick="confirmSubmit()">Continue Anyway</button>
-        </div>
-      </div>
+        </tbody>
+      </table>
     </div>
+    <div class="btn-row">
+      <a href="/review/{{ record.id }}" class="btn btn-primary">&#9999; Review Record</a>
+    </div>
+  </div>
+  {% endif %}
+  {% endif %}
 
-    <script>
-    (function () {
-      'use strict';
+</div>
 
-      /* ── Helpers ──────────────────────────────────────────────────────── */
-      function setBadge(el, cls, text) {
-        el.className = 'badge ' + cls;
-        el.textContent = text;
+<!-- ── AI-not-ready warning modal ────────────────────────────────────────── -->
+<div class="modal-overlay" id="ai-warn-modal" role="dialog" aria-modal="true"
+     aria-labelledby="ai-warn-title">
+  <div class="modal-box">
+    <h2 id="ai-warn-title">&#9888; AI Not Ready</h2>
+    <p id="ai-warn-body">
+      The AI model is not ready yet. Extraction results may be incomplete or
+      unreliable. Check progress on the
+      <a href="/diagnostics">Diagnostics page</a>.
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAiWarning()">
+        Cancel &mdash; Wait for AI
+      </button>
+      <button class="btn btn-warning" onclick="confirmSubmit()">
+        Continue Anyway
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+
+  /* ── Submit warning ─────────────────────────────────────────────────── */
+  var _submitPending = false;
+
+  document.getElementById('upload-form').addEventListener('submit', function (e) {
+    if (_submitPending) return;
+    var status = window._currentAiStatus;
+    if (status === 'loading' || status === 'unavailable') {
+      e.preventDefault();
+      var body = document.getElementById('ai-warn-body');
+      if (status === 'loading') {
+        body.innerHTML =
+          'The AI model is still downloading. Results may be incomplete until ' +
+          'the download finishes. Monitor progress on the ' +
+          '<a href="/diagnostics">Diagnostics page</a>.';
+      } else {
+        body.innerHTML =
+          'The AI service is currently unavailable. Extraction will fall back ' +
+          'to OCR only. Visit the ' +
+          '<a href="/diagnostics">Diagnostics page</a> to start AI services.';
       }
+      document.getElementById('ai-warn-modal').classList.add('open');
+    }
+  });
 
-      /* ── AI status ─────────────────────────────────────────────────────── */
-      var _currentAiStatus = 'unknown';
+  window.closeAiWarning = function () {
+    document.getElementById('ai-warn-modal').classList.remove('open');
+    _submitPending = false;
+  };
 
-      function applyAiStatus(data) {
-        var provBadge = document.getElementById('provider-badge');
-        var aiBadge   = document.getElementById('ai-badge');
-        var dot       = document.getElementById('ai-dot');
+  window.confirmSubmit = function () {
+    document.getElementById('ai-warn-modal').classList.remove('open');
+    _submitPending = true;
+    document.getElementById('upload-form').submit();
+  };
 
-        setBadge(provBadge, 'badge-info', data.extraction_provider.toUpperCase());
+  /* ── Manual-entry toggle ────────────────────────────────────────────── */
+  var manualChk  = document.getElementById('manual-entry-chk');
+  var manualHint = document.getElementById('manual-hint');
+  var submitBtn  = document.getElementById('submit-btn');
 
-        var s = data.ai_status;
-        _currentAiStatus = s;
-
-        dot.className = 'ai-dot';
-        if (s === 'ready') {
-          setBadge(aiBadge, 'badge-ok', '\u2713 AI Ready');
-          dot.classList.add('ai-dot-green');
-        } else if (s === 'loading') {
-          setBadge(aiBadge, 'badge-warn', '\u25F4 AI Loading');
-          dot.classList.add('ai-dot-yellow');
-        } else if (s === 'not_configured') {
-          setBadge(aiBadge, 'badge-neutral', '\u2014 OCR only');
-          dot.classList.add('ai-dot-grey');
-        } else {
-          setBadge(aiBadge, 'badge-warn', '\u26A0 AI Unavailable');
-          dot.classList.add('ai-dot-red');
-        }
-      }
-
-      function refreshStatus() {
-        fetch('/api/status')
-          .then(function (r) { return r.json(); })
-          .then(applyAiStatus)
-          .catch(function () {
-            setBadge(document.getElementById('ai-badge'), 'badge-err', '? Status error');
-            document.getElementById('ai-dot').className = 'ai-dot ai-dot-red';
-          });
-      }
-
-      /* ── Submit warning ─────────────────────────────────────────────────── */
-      var _submitPending = false;
-
-      document.getElementById('upload-form').addEventListener('submit', function (e) {
-        if (_submitPending) return; // already confirmed – let it through
-        if (_currentAiStatus === 'loading' || _currentAiStatus === 'unavailable') {
-          e.preventDefault();
-          var body = document.getElementById('ai-warn-body');
-          if (_currentAiStatus === 'loading') {
-            body.innerHTML =
-              'The AI model is still downloading. Results may be incomplete or ' +
-              'unreliable until the download finishes. You can monitor progress on ' +
-              'the <a href="/diagnostics">Diagnostics page</a>.';
-          } else {
-            body.innerHTML =
-              'The AI service is currently unavailable. Extraction will fall back ' +
-              'to OCR only and results may be unreliable. Visit the ' +
-              '<a href="/diagnostics">Diagnostics page</a> to start AI services.';
-          }
-          document.getElementById('ai-warn-modal').classList.add('open');
-        }
-      });
-
-      window.closeAiWarning = function () {
-        document.getElementById('ai-warn-modal').classList.remove('open');
-        _submitPending = false;
-      };
-
-      window.confirmSubmit = function () {
-        document.getElementById('ai-warn-modal').classList.remove('open');
-        _submitPending = true;
-        document.getElementById('upload-form').submit();
-      };
-
-      /* ── Manual entry toggle ──────────────────────────────────────────── */
-      var manualChk = document.getElementById('manual-entry-chk');
-      var manualHint = document.getElementById('manual-hint');
-      var submitBtn = document.getElementById('submit-btn');
-      function updateManualMode() {
-        if (manualChk.checked) {
-          submitBtn.textContent = '✏ Save and Annotate Manually';
-          manualHint.style.display = '';
-        } else {
-          submitBtn.innerHTML = '&#8593; Extract and Save';
-          manualHint.style.display = 'none';
-        }
-      }
-      manualChk.addEventListener('change', updateManualMode);
-
-      /* ── Boot ──────────────────────────────────────────────────────────── */
-      refreshStatus();
-      // Refresh status every 60 s in the background – detailed polling is on
-      // the Diagnostics page.
-      setInterval(refreshStatus, 60000);
-    }());
-    </script>
-  </body>
-</html>
-
+  function updateManualMode() {
+    if (manualChk.checked) {
+      submitBtn.innerHTML = '&#9998; Save and Annotate Manually';
+      manualHint.style.display = '';
+    } else {
+      submitBtn.innerHTML = '&#8593; Extract and Save';
+      manualHint.style.display = 'none';
+    }
+  }
+  manualChk.addEventListener('change', updateManualMode);
+}());
+</script>
+{% endblock %}

@@ -1,262 +1,190 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>State Layout Editor</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, sans-serif; background: #f5f7fa; font-size: 0.9rem; color: #222; }
-  h1 { color: #003366; font-size: 1.4rem; margin-bottom: 0.75rem; }
-  h2 { color: #003366; font-size: 0.95rem; font-weight: 700; border-bottom: 2px solid #e2e8f0;
-       padding-bottom: 0.4rem; margin-bottom: 0.75rem; margin-top: 0; }
+{% extends "base.html" %}
+{% set active_page = 'layout_editor' %}
 
-  /* ── Toolbar ───────────────────────────────────────────────────────── */
-  .toolbar { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;
-             margin-bottom: 1rem; padding: 0.75rem 1rem; background: #fff;
-             border-bottom: 1px solid #e2e8f0; }
-  .toolbar a { padding: 0.35rem 0.8rem; background: #003366; color: white;
-               text-decoration: none; border-radius: 4px; font-size: 0.85rem; }
-  .toolbar a:hover { background: #00509e; }
+{% block title %}State Layout Editor | NMVITIS Title Entry Tool{% endblock %}
 
-  /* ── Body wrapper ──────────────────────────────────────────────────── */
-  .page-wrap { padding: 1rem; }
+{% block content %}
+<div class="page-wrap-wide">
 
-  /* ── Two-column layout ─────────────────────────────────────────────── */
-  .editor-layout { display: grid; grid-template-columns: 1fr 380px; gap: 1rem; }
-  @media (max-width: 900px) { .editor-layout { grid-template-columns: 1fr; } }
-
-  /* ── Card ──────────────────────────────────────────────────────────── */
-  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
-          padding: 1rem; margin-bottom: 1rem; }
-
-  /* ── Upload / page nav row ─────────────────────────────────────────── */
-  .doc-controls { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-                  margin-bottom: 0.75rem; }
-  .doc-controls label { font-size: 0.8rem; color: #555; }
-  .file-btn { display: inline-block; padding: 0.35rem 0.8rem; background: #003366;
-              color: white; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-  .file-btn:hover { background: #00509e; }
-  .file-input-hidden { display: none; }
-  .page-nav { display: flex; align-items: center; gap: 0.35rem; }
-  .page-nav button { padding: 0.25rem 0.55rem; border: 1px solid #ccc; background: #f8f9fa;
-                     border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-  .page-nav button:disabled { opacity: 0.45; cursor: default; }
-  #page-label { font-size: 0.82rem; color: #555; min-width: 55px; text-align: center; }
-
-  /* ── Canvas wrapper ────────────────────────────────────────────────── */
-  .canvas-wrap { position: relative; border: 2px solid #e2e8f0; border-radius: 6px;
-                 background: #e8eaf0; min-height: 200px; overflow: auto; }
-  #editor-canvas { display: none; cursor: crosshair; max-width: none; }
-  #canvas-placeholder { display: flex; align-items: center; justify-content: center;
-                         min-height: 200px; color: #999; font-size: 0.9rem;
-                         flex-direction: column; gap: 0.5rem; padding: 2rem; text-align: center; }
-  .canvas-tip { font-size: 0.78rem; background: #fffbeb; border: 1px solid #fde68a;
-                border-radius: 4px; padding: 0.4rem 0.75rem; margin-top: 0.5rem; color: #92400e; }
-
-  /* ── Controls panel ────────────────────────────────────────────────── */
-  .controls-panel { display: flex; flex-direction: column; gap: 0; }
-
-  /* ── Form rows ──────────────────────────────────────────────────────── */
-  .form-row { margin-bottom: 0.6rem; }
-  .form-row label { display: block; font-size: 0.78rem; color: #555; margin-bottom: 0.2rem; font-weight: 600; }
-  .form-row input[type=text] { width: 100%; padding: 0.35rem 0.5rem; border: 1px solid #ccc;
-                                border-radius: 4px; font-size: 0.875rem; }
-  .form-row input[type=text]:focus { outline: 2px solid #003366; border-color: transparent; }
-
-  /* ── Buttons ────────────────────────────────────────────────────────── */
-  .btn { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.4rem 0.9rem;
-         border: none; border-radius: 4px; cursor: pointer; font-size: 0.875rem; font-weight: bold; }
-  .btn-primary { background: #003366; color: white; }
-  .btn-primary:hover { background: #00509e; }
-  .btn-green  { background: #15803d; color: white; }
-  .btn-green:hover  { background: #166534; }
-  .btn-green:disabled { opacity: 0.55; cursor: default; }
-  .btn-danger { background: #991b1b; color: white; padding: 0.25rem 0.6rem; font-size: 0.8rem; }
-  .btn-danger:hover { background: #7f1d1d; }
-  .btn-outline { background: #f8f9fa; color: #003366; border: 1px solid #ccc; }
-  .btn-outline:hover { background: #e2e8f0; }
-  .btn-sm { padding: 0.25rem 0.55rem; font-size: 0.78rem; font-weight: bold; border: none;
-            border-radius: 4px; cursor: pointer; }
-
-  /* ── Box list table ─────────────────────────────────────────────────── */
-  .box-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-  .box-table th { background: #f1f5f9; padding: 0.4rem 0.5rem; text-align: left;
-                  border-bottom: 2px solid #e2e8f0; font-size: 0.78rem; color: #555; font-weight: 700; }
-  .box-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #f0f4f8; vertical-align: middle; }
-  .box-table tr:last-child td { border-bottom: none; }
-  .box-num { display: inline-flex; align-items: center; justify-content: center;
-             width: 22px; height: 22px; background: #cc0000; color: white;
-             border-radius: 50%; font-size: 0.75rem; font-weight: bold; flex-shrink: 0; }
-  .box-table select { width: 100%; padding: 0.25rem 0.3rem; border: 1px solid #ccc;
-                      border-radius: 4px; font-size: 0.8rem; }
-  .box-table input[type=text] { width: 100%; padding: 0.25rem 0.35rem; border: 1px solid #ccc;
-                                 border-radius: 4px; font-size: 0.78rem; }
-  .box-table input[type=text]::placeholder { color: #bbb; font-size: 0.75rem; }
-  .empty-msg { color: #999; font-size: 0.82rem; padding: 0.5rem 0; }
-
-  /* ── JSON preview ───────────────────────────────────────────────────── */
-  #json-preview { font-family: monospace; font-size: 0.78rem; background: #1e293b;
-                  color: #94d28e; border-radius: 6px; padding: 0.75rem; overflow-x: auto;
-                  max-height: 240px; overflow-y: auto; white-space: pre; display: none; }
-
-  /* ── Info banner ────────────────────────────────────────────────────── */
-  .info-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;
-                 padding: 0.6rem 0.9rem; font-size: 0.82rem; color: #1e3a5f; margin-bottom: 1rem; }
-  .info-banner strong { color: #003366; }
-
-  /* ── Status ─────────────────────────────────────────────────────────── */
-  #save-status { font-size: 0.85rem; font-weight: bold; margin-top: 0.6rem; min-height: 1.2em; }
-
-  /* ── Tolerance display ──────────────────────────────────────────────── */
-  .tolerance-row { display: flex; justify-content: space-between; font-size: 0.8rem;
-                   color: #555; padding: 0.3rem 0; border-bottom: 1px solid #f0f4f8; }
-  .tolerance-row:last-child { border-bottom: none; }
-  .tolerance-val { font-weight: bold; color: #003366; font-family: monospace; }
-</style>
-</head>
-<body>
-
-<div class="toolbar">
-  <a href="/">⬆ Upload</a>
-  <a href="/review">📋 Records</a>
-  <a href="/annotate">🔍 Annotate</a>
-  <a href="/training">🏭 Training</a>
-  <a href="/help">❓ Help</a>
-</div>
-
-<div class="page-wrap">
-<h1>🗺️ State Layout Editor</h1>
-
-<div class="info-banner">
-  Draw <strong>numbered red boxes</strong> on the document to mark where each field
-  appears. Assign each box a <strong>field name</strong> using the panel on the right,
-  then click <strong>Save Template</strong>. The saved layout is used immediately by
-  the AI extraction pipeline to focus OCR on the correct regions — increasing
-  confidence for this state's title format.
-</div>
-
-<div class="editor-layout">
-
-  <!-- ── Left: document viewer ─────────────────────────────────────────── -->
-  <div class="viewer-panel">
-    <div class="card">
-      <h2>Title Document</h2>
-
-      <div class="doc-controls">
-        <label class="file-btn" for="file-input">📄 Open Document</label>
-        <input type="file" id="file-input" class="file-input-hidden"
-               accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp">
-
-        <div class="page-nav">
-          <button id="prev-page" disabled title="Previous page">◀</button>
-          <span id="page-label">— / —</span>
-          <button id="next-page" disabled title="Next page">▶</button>
-        </div>
-
-        <span id="upload-status" style="font-size:0.78rem;color:#666;"></span>
-      </div>
-
-      <div class="canvas-wrap" id="canvas-wrap">
-        <div id="canvas-placeholder">
-          <span>📁 Open a title document to start drawing field regions</span>
-          <span style="font-size:0.8rem;color:#aaa;">Supports PDF, PNG, JPEG, TIFF</span>
-        </div>
-        <canvas id="editor-canvas"></canvas>
-      </div>
-
-      <div class="canvas-tip" id="canvas-tip" style="display:none;">
-        🖱 <strong>Click and drag</strong> on the document to draw a field region box.
-        Each box gets a red number. Assign it to a field in the panel on the right.
-      </div>
-    </div>
+  <div class="page-heading">
+    <h1>&#128506; State Layout Editor</h1>
+    <p class="page-hint">
+      Draw field-region boxes on a title document so the AI extraction pipeline
+      knows exactly where to look for each NMVITIS field.
+    </p>
   </div>
 
-  <!-- ── Right: controls ───────────────────────────────────────────────── -->
-  <div class="controls-panel">
+  <div class="info-banner" role="note">
+    Draw <strong>numbered red boxes</strong> on the document to mark where each field
+    appears. Assign each box a <strong>field name</strong> using the panel on the right,
+    then click <strong>Save Template</strong>. The saved layout is used immediately by
+    the AI extraction pipeline to focus OCR on the correct regions — increasing
+    confidence for this state&rsquo;s title format.
+  </div>
 
-    <!-- State metadata -->
-    <div class="card">
-      <h2>State Template</h2>
-      <div class="form-row">
-        <label>State abbreviation (2-letter):</label>
-        <input type="text" id="state-input" maxlength="2" placeholder="e.g. NM"
-               style="text-transform:uppercase;width:80px;">
-      </div>
-      <div class="form-row">
-        <label>State full name:</label>
-        <input type="text" id="state-name-input" placeholder="e.g. New Mexico">
-      </div>
-      <div class="form-row">
-        <label>Layout version:</label>
-        <input type="text" id="layout-version-input" value="1" placeholder="1" style="width:60px;">
-      </div>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.25rem;">
-        <button class="btn btn-outline" onclick="loadTemplate()">📂 Load Existing</button>
-        <button class="btn btn-outline" onclick="clearAllBoxes()">🗑 Clear Boxes</button>
+  <div class="editor-layout">
+
+    <!-- ── Left: document viewer ──────────────────────────────────────── -->
+    <div class="viewer-panel">
+      <div class="card">
+        <h2>Title Document</h2>
+
+        <div class="doc-controls">
+          <label class="btn btn-ghost btn-sm" for="file-input"
+                 style="cursor:pointer;min-height:32px;">
+            &#128196; Open Document
+          </label>
+          <input type="file" id="file-input" class="file-input-hidden"
+                 accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" />
+
+          <div class="page-nav">
+            <button id="prev-page" disabled class="zoom-btn" title="Previous page">&#9664;</button>
+            <span id="page-label"
+                  style="font-size:0.82rem;color:var(--clr-text-muted);min-width:55px;text-align:center;">
+              &mdash; / &mdash;
+            </span>
+            <button id="next-page" disabled class="zoom-btn" title="Next page">&#9654;</button>
+          </div>
+
+          <span id="upload-status"
+                style="font-size:0.78rem;color:var(--clr-text-muted);"></span>
+        </div>
+
+        <div class="canvas-wrap" id="canvas-wrap">
+          <div id="canvas-placeholder">
+            <span>&#128193; Open a title document to start drawing field regions</span>
+            <span style="font-size:0.8rem;color:var(--clr-text-faint);">
+              Supports PDF, PNG, JPEG, TIFF
+            </span>
+          </div>
+          <canvas id="editor-canvas"></canvas>
+        </div>
+
+        <div class="canvas-tip" id="canvas-tip" style="display:none;">
+          &#128432; <strong>Click and drag</strong> on the document to draw a field
+          region box. Each box gets a red number. Assign it to a field in the
+          panel on the right.
+        </div>
       </div>
     </div>
 
-    <!-- Field regions list -->
-    <div class="card">
-      <h2>Field Regions <span id="box-count-badge"
-           style="font-size:0.75rem;background:#e2e8f0;color:#444;
-                  border-radius:99px;padding:0.1rem 0.5rem;font-weight:normal;margin-left:0.25rem;"></span></h2>
-      <div id="box-list">
-        <p class="empty-msg">No boxes yet — draw on the document first.</p>
+    <!-- ── Right: controls ─────────────────────────────────────────────── -->
+    <div class="controls-panel">
+
+      <!-- Numbered how-to steps -->
+      <div class="card">
+        <h2>How to Use</h2>
+        <ul class="numbered-steps">
+          <li>Enter the <strong>state abbreviation</strong> below to auto-load any existing
+              template.</li>
+          <li>Click <strong>Open Document</strong> to load a title PDF or image.</li>
+          <li><strong>Click and drag</strong> on the document to draw field-region boxes.
+              Each box is numbered in red.</li>
+          <li>Assign each box a <strong>field name</strong> in the <em>Field Regions</em>
+              table below.</li>
+          <li>Click <strong>Save Template</strong> &mdash; the layout is active
+              immediately.</li>
+        </ul>
       </div>
-    </div>
 
-    <!-- AI integration note -->
-    <div class="card">
-      <h2>🤖 AI Integration</h2>
-      <p style="font-size:0.82rem;color:#444;margin-bottom:0.6rem;">
-        The saved template is immediately used by the AI extraction pipeline.
-        When a title from this state is uploaded:
-      </p>
-      <ul style="font-size:0.8rem;color:#555;padding-left:1.2rem;line-height:1.7;">
-        <li>Each region box is cropped from the document image.</li>
-        <li>Crops are sent to the AI model alongside the full-page image.</li>
-        <li>Label hints sharpen the AI prompt for each field.</li>
-        <li>Result confidence is boosted for fields with focused crops.</li>
-      </ul>
-      <p style="font-size:0.78rem;color:#666;margin-top:0.6rem;">
-        Active AI confidence threshold:
-        <strong id="conf-threshold" style="font-family:monospace;color:#003366;"></strong>
-        (set via <code>AI_CONFIDENCE_THRESHOLD</code> env var).
-      </p>
-      <p style="font-size:0.78rem;color:#666;margin-top:0.4rem;">
-        Active model: <strong id="active-model" style="font-family:monospace;color:#003366;"></strong>
-      </p>
-    </div>
-
-    <!-- Save -->
-    <div class="card">
-      <h2>Save Template</h2>
-      <p style="font-size:0.82rem;color:#444;margin-bottom:0.75rem;">
-        Saves the layout as <code>state_templates/&lt;STATE&gt;.json</code> on
-        the server. The template is immediately active for all future extractions
-        — no restart needed.
-      </p>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-        <button class="btn btn-green" id="save-btn" onclick="saveTemplate()">💾 Save Template</button>
-        <button class="btn btn-outline" onclick="toggleJsonPreview()">{ } Preview JSON</button>
+      <!-- State metadata -->
+      <div class="card">
+        <h2>State Template</h2>
+        <div class="form-field">
+          <label for="state-input">State abbreviation (2 letters):</label>
+          <input type="text" id="state-input" maxlength="2"
+                 placeholder="e.g. NM" style="max-width:80px;text-transform:uppercase;" />
+        </div>
+        <div class="form-field">
+          <label for="state-name-input">State full name:</label>
+          <input type="text" id="state-name-input" placeholder="e.g. New Mexico" />
+        </div>
+        <div class="form-field">
+          <label for="layout-version-input">Layout version:</label>
+          <input type="text" id="layout-version-input" value="1"
+                 placeholder="1" style="width:60px;" />
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.25rem;">
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate()">
+            &#128194; Load Existing
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="clearAllBoxes()">
+            &#128465; Clear Boxes
+          </button>
+        </div>
       </div>
-      <div id="save-status"></div>
-      <pre id="json-preview"></pre>
-    </div>
 
-  </div><!-- /controls-panel -->
-</div><!-- /editor-layout -->
-</div><!-- /page-wrap -->
+      <!-- Field regions list -->
+      <div class="card">
+        <h2>
+          Field Regions
+          <span id="box-count-badge"
+                style="font-size:0.75rem;background:var(--clr-border);color:var(--clr-text-muted);
+                       border-radius:99px;padding:0.1rem 0.5rem;font-weight:normal;margin-left:0.25rem;">
+          </span>
+        </h2>
+        <div id="box-list">
+          <p style="color:var(--clr-text-faint);font-size:0.82rem;padding:0.5rem 0;">
+            No boxes yet &mdash; draw on the document first.
+          </p>
+        </div>
+      </div>
 
+      <!-- AI integration note -->
+      <div class="card">
+        <h2>&#129302; AI Integration</h2>
+        <p style="font-size:0.82rem;color:var(--clr-text-muted);margin-bottom:0.6rem;">
+          The saved template is immediately used by the AI extraction pipeline.
+          When a title from this state is uploaded:
+        </p>
+        <ul style="font-size:0.8rem;color:var(--clr-text-muted);padding-left:1.2rem;line-height:1.7;">
+          <li>Each region box is cropped from the document image.</li>
+          <li>Crops are sent to the AI model alongside the full-page image.</li>
+          <li>Label hints sharpen the AI prompt for each field.</li>
+          <li>Result confidence is boosted for fields with focused crops.</li>
+        </ul>
+        <p style="font-size:0.78rem;color:var(--clr-text-faint);margin-top:0.6rem;">
+          Active model:
+          <strong id="active-model"
+                  style="font-family:monospace;color:var(--clr-primary);"></strong>
+        </p>
+      </div>
+
+      <!-- Save -->
+      <div class="card">
+        <h2>Save Template</h2>
+        <p style="font-size:0.82rem;color:var(--clr-text-muted);margin-bottom:0.75rem;">
+          Saves as <code>state_templates/&lt;STATE&gt;.json</code> on the server.
+          No restart needed &mdash; the template is immediately active.
+        </p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-success" id="save-btn"
+                  onclick="saveTemplate()">
+            &#128190; Save Template
+          </button>
+          <button class="btn btn-ghost btn-sm"
+                  onclick="toggleJsonPreview()">
+            { } Preview JSON
+          </button>
+        </div>
+        <div id="save-status"
+             style="font-size:0.875rem;font-weight:700;margin-top:0.5rem;"></div>
+        <pre id="json-preview"></pre>
+      </div>
+
+    </div><!-- /controls-panel -->
+  </div><!-- /editor-layout -->
+</div><!-- /page-wrap-wide -->
+{% endblock %}
+
+{% block scripts %}
 <script>
 'use strict';
 
-// ── Constants ───────────────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 
 const FIELD_NAMES = [
-  '', // placeholder
+  '',
   'state', 'title_number', 'vin', 'vehicle_year', 'make', 'model',
   'body_style', 'color', 'odometer', 'owner_name', 'owner_address',
   'purchase_price', 'sale_date', 'issue_date',
@@ -280,41 +208,38 @@ const FIELD_LABELS = {
   issue_date:       'issue_date',
 };
 
-// ── State ────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 
-let bgImage   = null;   // HTMLImageElement rendered into the canvas
+let bgImage   = null;
 let canvasW   = 0;
 let canvasH   = 0;
-let boxes     = [];     // [{id, x1, y1, x2, y2}]
-let mappings  = {};     // {id: {field:'', hints:[]}}
+let boxes     = [];
+let mappings  = {};
 let nextBoxId = 1;
 
-let currentPage    = 1;
-let totalPages     = 1;
-let originalFilename = null;  // UUID filename of the original uploaded PDF/image
+let currentPage      = 1;
+let totalPages       = 1;
+let originalFilename = null;
 
-// Drawing rubber-band
-let isDrawing  = false;
-let drawStart  = null;
+let isDrawing   = false;
+let drawStart   = null;
 let drawCurrent = null;
 
-// Pending template to render when image is loaded
 let pendingTemplate = null;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
-const canvas      = document.getElementById('editor-canvas');
-const ctx         = canvas.getContext('2d');
-const fileInput   = document.getElementById('file-input');
-const prevBtn     = document.getElementById('prev-page');
-const nextBtn     = document.getElementById('next-page');
-const pageLabel   = document.getElementById('page-label');
+const canvas       = document.getElementById('editor-canvas');
+const ctx          = canvas.getContext('2d');
+const fileInput    = document.getElementById('file-input');
+const prevBtn      = document.getElementById('prev-page');
+const nextBtn      = document.getElementById('next-page');
+const pageLabel    = document.getElementById('page-label');
 const uploadStatus = document.getElementById('upload-status');
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 (async function init() {
-  // Pre-fill state from server-rendered initial value.
   const initialState = {{ initial_state | tojson }};
   if (initialState) {
     const stateInput = document.getElementById('state-input');
@@ -322,21 +247,16 @@ const uploadStatus = document.getElementById('upload-status');
     await autoLoadTemplate(initialState);
   }
 
-  // Fetch active model and confidence threshold for the info panel.
   try {
     const resp = await fetch('/api/models');
     if (resp.ok) {
       const data = await resp.json();
       document.getElementById('active-model').textContent = data.active || '(unknown)';
     }
-  } catch (_) { /* ignore */ }
-
-  // Display the default confidence threshold value.
-  document.getElementById('conf-threshold').textContent =
-    'configured via AI_CONFIDENCE_THRESHOLD (default: 0.6)';
+  } catch (_) {}
 })();
 
-// ── File upload ──────────────────────────────────────────────────────────────
+// ── File upload ───────────────────────────────────────────────────────────────
 
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -411,8 +331,6 @@ function loadImageFromUrl(url) {
     const img = new Image();
     img.onload = () => {
       bgImage = img;
-
-      // Fit canvas to container width, preserving aspect ratio.
       const wrap = document.getElementById('canvas-wrap');
       const maxW = Math.max(300, wrap.clientWidth - 4);
       const scale = Math.min(1.0, maxW / img.naturalWidth);
@@ -422,13 +340,10 @@ function loadImageFromUrl(url) {
       canvas.height = canvasH;
       canvas.style.display = 'block';
       document.getElementById('canvas-placeholder').style.display = 'none';
-
-      // If a template was pre-loaded, convert regions to boxes now.
       if (pendingTemplate) {
         applyTemplateToCanvas(pendingTemplate);
         pendingTemplate = null;
       }
-
       redraw();
       resolve();
     };
@@ -441,12 +356,8 @@ function loadImageFromUrl(url) {
 
 function redraw() {
   ctx.clearRect(0, 0, canvasW, canvasH);
-  if (bgImage) {
-    ctx.drawImage(bgImage, 0, 0, canvasW, canvasH);
-  }
-  for (const box of boxes) {
-    drawBox(box, false);
-  }
+  if (bgImage) ctx.drawImage(bgImage, 0, 0, canvasW, canvasH);
+  for (const box of boxes) drawBox(box, false);
   if (isDrawing && drawStart && drawCurrent) {
     const x = Math.min(drawStart.x, drawCurrent.x);
     const y = Math.min(drawStart.y, drawCurrent.y);
@@ -463,37 +374,28 @@ function redraw() {
   }
 }
 
-function drawBox(box, _highlighted) {
+function drawBox(box) {
   const x = Math.min(box.x1, box.x2);
   const y = Math.min(box.y1, box.y2);
   const w = Math.abs(box.x2 - box.x1);
   const h = Math.abs(box.y2 - box.y1);
   const m = mappings[box.id] || { field: '', hints: [] };
-
   ctx.save();
-
-  // Translucent fill.
-  ctx.fillStyle = 'rgba(220, 0, 0, 0.08)';
+  ctx.fillStyle = 'rgba(220,0,0,0.08)';
   ctx.fillRect(x, y, w, h);
-
-  // Red solid border.
-  ctx.strokeStyle = 'rgba(204, 0, 0, 0.9)';
+  ctx.strokeStyle = 'rgba(204,0,0,0.9)';
   ctx.lineWidth = 2;
   ctx.setLineDash([]);
   ctx.strokeRect(x, y, w, h);
-
-  // Number badge (top-left corner of box).
-  const label = String(box.id);
+  const label   = String(box.id);
   const badgeSize = Math.min(20, Math.max(12, Math.min(w, h) * 0.28));
-  const badgeW = badgeSize * label.length * 0.7 + 6;
+  const badgeW  = badgeSize * label.length * 0.7 + 6;
   ctx.fillStyle = '#cc0000';
   ctx.fillRect(x, y, badgeW, badgeSize + 4);
   ctx.fillStyle = 'white';
   ctx.font = `bold ${badgeSize}px Arial`;
   ctx.textBaseline = 'top';
   ctx.fillText(label, x + 3, y + 2);
-
-  // Field-name chip below badge (if assigned).
   if (m.field) {
     const chipText = m.field.replace(/_/g, ' ');
     ctx.font = '10px Arial';
@@ -502,13 +404,12 @@ function drawBox(box, _highlighted) {
     const chipH = 14;
     const chipY = y + badgeSize + 6;
     if (chipY + chipH < y + h) {
-      ctx.fillStyle = 'rgba(0, 51, 102, 0.78)';
+      ctx.fillStyle = 'rgba(0,51,102,0.78)';
       ctx.fillRect(x + 2, chipY, chipW, chipH);
       ctx.fillStyle = 'white';
       ctx.fillText(chipText, x + 5, chipY + 2);
     }
   }
-
   ctx.restore();
 }
 
@@ -516,8 +417,8 @@ function drawBox(box, _highlighted) {
 
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
-  isDrawing  = true;
-  drawStart  = canvasPos(e);
+  isDrawing   = true;
+  drawStart   = canvasPos(e);
   drawCurrent = { ...drawStart };
   e.preventDefault();
 });
@@ -540,25 +441,18 @@ canvas.addEventListener('mouseup', (e) => {
     mappings[id] = { field: '', hints: [] };
     renderBoxList();
     redraw();
-  } else {
-    drawStart   = null;
-    drawCurrent = null;
-    redraw();
   }
-  drawStart   = null;
-  drawCurrent = null;
+  drawStart = drawCurrent = null;
 });
 
 canvas.addEventListener('mouseleave', () => {
   if (isDrawing) {
-    isDrawing   = false;
-    drawStart   = null;
-    drawCurrent = null;
+    isDrawing = false;
+    drawStart = drawCurrent = null;
     redraw();
   }
 });
 
-// Touch support (basic).
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   const t = e.touches[0];
@@ -587,23 +481,16 @@ canvas.addEventListener('touchend', (e) => {
     renderBoxList();
     redraw();
   }
-  drawStart   = null;
-  drawCurrent = null;
+  drawStart = drawCurrent = null;
   redraw();
 });
 
-function canvasPos(e) {
-  return canvasPosFromClient(e.clientX, e.clientY);
-}
-
-function canvasPosFromClient(cx, cy) {
+function canvasPos(e)                   { return canvasPosFromClient(e.clientX, e.clientY); }
+function canvasPosFromClient(cx, cy)    {
   const rect = canvas.getBoundingClientRect();
-  // Account for CSS scaling of canvas element relative to its logical size.
-  const scaleX = canvas.width  / rect.width;
-  const scaleY = canvas.height / rect.height;
   return {
-    x: (cx - rect.left) * scaleX,
-    y: (cy - rect.top)  * scaleY,
+    x: (cx - rect.left) * (canvas.width  / rect.width),
+    y: (cy - rect.top)  * (canvas.height / rect.height),
   };
 }
 
@@ -612,10 +499,12 @@ function canvasPosFromClient(cx, cy) {
 function renderBoxList() {
   const container = document.getElementById('box-list');
   const badge     = document.getElementById('box-count-badge');
-  badge.textContent = boxes.length ? `${boxes.length}` : '';
+  badge.textContent = boxes.length ? String(boxes.length) : '';
 
-  if (boxes.length === 0) {
-    container.innerHTML = '<p class="empty-msg">No boxes yet — draw on the document first.</p>';
+  if (!boxes.length) {
+    container.innerHTML =
+      '<p style="color:var(--clr-text-faint);font-size:0.82rem;padding:0.5rem 0;">' +
+      'No boxes yet &mdash; draw on the document first.</p>';
     return;
   }
 
@@ -625,8 +514,7 @@ function renderBoxList() {
     const fieldOptions = FIELD_NAMES.map(f =>
       `<option value="${f}" ${f === m.field ? 'selected' : ''}>${FIELD_LABELS[f] || f}</option>`
     ).join('');
-    const numId = parseInt(box.id, 10);  // ensure integer for safe inline handler
-
+    const numId = parseInt(box.id, 10);
     return `
       <tr id="box-row-${numId}">
         <td><span class="box-num">${numId}</span></td>
@@ -642,7 +530,11 @@ function renderBoxList() {
                  title="Comma-separated label hints used in the AI prompt">
         </td>
         <td>
-          <button class="btn-sm btn-danger" onclick="deleteBox(${numId})" title="Delete box">🗑</button>
+          <button class="btn-sm btn-danger btn btn-sm"
+                  style="background:#991b1b;color:white;padding:0.2rem 0.5rem;"
+                  onclick="deleteBox(${numId})" title="Delete box">
+            &#128465;
+          </button>
         </td>
       </tr>`;
   }).join('');
@@ -695,39 +587,26 @@ function buildTemplate() {
   const stateName     = document.getElementById('state-name-input').value.trim();
   const layoutVersion = document.getElementById('layout-version-input').value.trim() || '1';
 
-  if (!state || !/^[A-Z]{2}$/.test(state)) {
+  if (!state || !/^[A-Z]{2}$/.test(state))
     throw new Error('State abbreviation must be exactly 2 uppercase letters (e.g., NM, CA).');
-  }
-  if (!canvasW || !canvasH) {
+  if (!canvasW || !canvasH)
     throw new Error('Upload a document first so coordinates can be normalised.');
-  }
 
-  // Group regions by field name.
   const fields = {};
   for (const box of boxes) {
     const m = mappings[box.id];
-    if (!m || !m.field) continue; // skip unmapped boxes
-
+    if (!m || !m.field) continue;
     const left   = parseFloat((Math.min(box.x1, box.x2) / canvasW).toFixed(4));
     const top    = parseFloat((Math.min(box.y1, box.y2) / canvasH).toFixed(4));
     const right  = parseFloat((Math.max(box.x1, box.x2) / canvasW).toFixed(4));
     const bottom = parseFloat((Math.max(box.y1, box.y2) / canvasH).toFixed(4));
-
-    if (!fields[m.field]) {
-      fields[m.field] = { regions: [], label_hints: [] };
-    }
+    if (!fields[m.field]) fields[m.field] = { regions: [], label_hints: [] };
     fields[m.field].regions.push({ left, top, right, bottom });
-
-    // Merge hints (deduplicate across multiple boxes for the same field).
     const existing = new Set(fields[m.field].label_hints);
     for (const h of (m.hints || [])) {
-      if (!existing.has(h)) {
-        fields[m.field].label_hints.push(h);
-        existing.add(h);
-      }
+      if (!existing.has(h)) { fields[m.field].label_hints.push(h); existing.add(h); }
     }
   }
-
   return { state, state_name: stateName || state, layout_version: layoutVersion, fields };
 }
 
@@ -735,21 +614,19 @@ async function saveTemplate() {
   const statusEl = document.getElementById('save-status');
   const btn      = document.getElementById('save-btn');
   statusEl.textContent = '';
-  statusEl.style.color = '';
 
   let tmpl;
-  try {
-    tmpl = buildTemplate();
-  } catch (err) {
-    statusEl.style.color = '#991b1b';
-    statusEl.textContent  = '✖ ' + err.message;
+  try { tmpl = buildTemplate(); }
+  catch (err) {
+    statusEl.style.color = 'var(--badge-err-text)';
+    statusEl.textContent = '✖ ' + err.message;
     return;
   }
 
   const mapped = Object.keys(tmpl.fields);
-  if (mapped.length === 0) {
-    statusEl.style.color  = '#d97706';
-    statusEl.textContent  = '⚠ No boxes have been assigned to fields. Assign field names in the list.';
+  if (!mapped.length) {
+    statusEl.style.color = 'var(--badge-warn-text)';
+    statusEl.textContent = '⚠ No boxes have been assigned to fields. Assign field names in the list.';
     return;
   }
 
@@ -758,25 +635,21 @@ async function saveTemplate() {
 
   try {
     const resp = await fetch(`/api/layout/${tmpl.state}`, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(tmpl),
+      body: JSON.stringify(tmpl),
     });
     const data = await resp.json();
     if (!resp.ok) {
-      statusEl.style.color = '#991b1b';
-      statusEl.textContent  = '✖ ' + (data.error || 'Failed to save.');
+      statusEl.style.color = 'var(--badge-err-text)';
+      statusEl.textContent = '✖ ' + (data.error || 'Failed to save.');
       return;
     }
-    statusEl.style.color = '#15803d';
-    statusEl.textContent  =
+    statusEl.style.color = 'var(--badge-ok-text)';
+    statusEl.textContent =
       `✔ Template for ${tmpl.state} saved — ${mapped.length} field(s): ${mapped.join(', ')}.`;
-
-    // Refresh JSON preview if open.
     const preview = document.getElementById('json-preview');
-    if (preview.style.display !== 'none') {
-      preview.textContent = JSON.stringify(tmpl, null, 2);
-    }
+    if (preview.style.display !== 'none') preview.textContent = JSON.stringify(tmpl, null, 2);
   } finally {
     btn.disabled    = false;
     btn.textContent = '💾 Save Template';
@@ -785,14 +658,10 @@ async function saveTemplate() {
 
 function toggleJsonPreview() {
   const preview = document.getElementById('json-preview');
-  if (preview.style.display !== 'none') {
-    preview.style.display = 'none';
-    return;
-  }
+  if (preview.style.display !== 'none') { preview.style.display = 'none'; return; }
   let tmpl;
-  try {
-    tmpl = buildTemplate();
-  } catch (err) {
+  try   { tmpl = buildTemplate(); }
+  catch (err) {
     preview.style.display = 'block';
     preview.textContent   = '// Error: ' + err.message;
     return;
@@ -807,50 +676,48 @@ async function loadTemplate() {
   const state = document.getElementById('state-input').value.trim().toUpperCase();
   const statusEl = document.getElementById('save-status');
   if (!state || !/^[A-Z]{2}$/.test(state)) {
-    statusEl.style.color = '#991b1b';
-    statusEl.textContent = '✖ Enter a valid 2-letter state abbreviation (e.g., NM, CA) first.';
+    statusEl.style.color = 'var(--badge-err-text)';
+    statusEl.textContent = '✖ Enter a valid 2-letter state abbreviation first.';
     return;
   }
-
   statusEl.textContent = `⏳ Loading template for ${state}…`;
-  statusEl.style.color = '#555';
+  statusEl.style.color = 'var(--clr-text-muted)';
 
   let resp, tmpl;
   try {
     resp = await fetch(`/api/layout/${state}`);
     tmpl = await resp.json();
   } catch (err) {
-    statusEl.style.color = '#991b1b';
+    statusEl.style.color = 'var(--badge-err-text)';
     statusEl.textContent = `✖ Network error loading template for ${state}.`;
     return;
   }
 
   if (!resp.ok || !tmpl.state) {
-    statusEl.style.color = '#d97706';
+    statusEl.style.color = 'var(--badge-warn-text)';
     statusEl.textContent = `ℹ No existing template found for ${state}. Draw boxes to create one.`;
     return;
   }
 
-  document.getElementById('state-name-input').value    = tmpl.state_name     || '';
+  document.getElementById('state-name-input').value     = tmpl.state_name     || '';
   document.getElementById('layout-version-input').value = tmpl.layout_version || '1';
 
   if (bgImage && canvasW > 0) {
     applyTemplateToCanvas(tmpl);
     const fieldCount = Object.keys(tmpl.fields || {}).length;
-    statusEl.style.color = '#15803d';
-    statusEl.textContent = `✔ Template for ${state} loaded — ${fieldCount} field region(s) visualised.`;
+    statusEl.style.color = 'var(--badge-ok-text)';
+    statusEl.textContent =
+      `✔ Template for ${state} loaded — ${fieldCount} field region(s) visualised.`;
   } else {
     pendingTemplate = tmpl;
-    statusEl.style.color = '#15803d';
-    statusEl.textContent = `✔ Template for ${state} loaded. Open a document to visualise the regions.`;
+    statusEl.style.color = 'var(--badge-ok-text)';
+    statusEl.textContent =
+      `✔ Template for ${state} loaded. Open a document to visualise the regions.`;
   }
 }
 
 function applyTemplateToCanvas(tmpl) {
-  boxes     = [];
-  mappings  = {};
-  nextBoxId = 1;
-
+  boxes = []; mappings = {}; nextBoxId = 1;
   for (const [fieldName, fdata] of Object.entries(tmpl.fields || {})) {
     for (const region of (fdata.regions || [])) {
       const id = nextBoxId++;
@@ -861,17 +728,13 @@ function applyTemplateToCanvas(tmpl) {
         x2: region.right  * canvasW,
         y2: region.bottom * canvasH,
       });
-      mappings[id] = {
-        field: fieldName,
-        hints: fdata.label_hints ? [...fdata.label_hints] : [],
-      };
+      mappings[id] = { field: fieldName, hints: fdata.label_hints ? [...fdata.label_hints] : [] };
     }
   }
   renderBoxList();
   redraw();
 }
 
-// Auto-load template when state input changes (debounced).
 let _stateTimer = null;
 document.getElementById('state-input').addEventListener('input', (e) => {
   clearTimeout(_stateTimer);
@@ -886,24 +749,18 @@ async function autoLoadTemplate(state) {
   if (!resp.ok) return;
   const tmpl = await resp.json();
   if (!tmpl.state) return;
-
-  document.getElementById('state-name-input').value    = tmpl.state_name     || '';
+  document.getElementById('state-name-input').value     = tmpl.state_name     || '';
   document.getElementById('layout-version-input').value = tmpl.layout_version || '1';
-
-  if (bgImage && canvasW > 0) {
-    applyTemplateToCanvas(tmpl);
-  } else {
-    pendingTemplate = tmpl;
-  }
+  if (bgImage && canvasW > 0) applyTemplateToCanvas(tmpl);
+  else pendingTemplate = tmpl;
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 function escHtml(s) {
   return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 </script>
-</body>
-</html>
+{% endblock %}

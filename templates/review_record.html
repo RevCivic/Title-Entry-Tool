@@ -1,281 +1,273 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Review Record #{{ record.id }}</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
-  h1 { color: #003366; }
-  .toolbar { margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
-  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
-               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
-  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
-  .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
-          padding: 1.25rem; }
-  .card h2 { margin-top: 0; font-size: 1rem; color: #003366; border-bottom: 2px solid #e2e8f0;
-             padding-bottom: 0.5rem; }
-  label { display: block; font-size: 0.8rem; color: #555; margin-top: 0.75rem; }
-  input[type=text], input[type=number] {
-    width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #ccc;
-    border-radius: 4px; font-size: 0.9rem; box-sizing: border-box; margin-top: 0.2rem;
-  }
-  .original { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
-  .low-conf { border-color: #f59e0b !important; background: #fffbeb; }
-  .btn-row { margin-top: 1.25rem; display: flex; gap: 0.75rem; flex-wrap: wrap; }
-  .btn { padding: 0.5rem 1.1rem; border: none; border-radius: 4px; cursor: pointer;
-         font-size: 0.9rem; font-weight: bold; }
-  .btn-save { background: #003366; color: white; }
-  .btn-save:hover { background: #00509e; }
-  .btn-approve { background: #15803d; color: white; }
-  .btn-approve:hover { background: #166534; }
-  .btn-bulk-approve { background: #0d6efd; color: white; }
-  .btn-bulk-approve:hover { background: #0a58ca; }
-  .corrections-list { font-size: 0.82rem; }
-  .corrections-list .item { padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; }
-  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px;
-           font-size: 0.75rem; font-weight: bold; }
-  .badge-ok { background: #d1fae5; color: #065f46; }
-  .badge-err { background: #fee2e2; color: #991b1b; }
-  .badge-gt  { background: #d1fae5; color: #065f46; }
-  .badge-corr { background: #fef3c7; color: #92400e; }
-  #save-status { margin-top: 0.75rem; font-size: 0.85rem; font-weight: bold; }
+{% extends "base.html" %}
+{% set active_page = 'records' %}
 
-  /* ── Progress bar ────────────────────────────────────────────────────── */
-  .progress-wrap { margin-bottom: 1rem; }
-  .progress-label { font-size: 0.8rem; color: #555; margin-bottom: 0.3rem; }
-  .progress-bar-outer { background: #e2e8f0; border-radius: 99px; height: 10px; }
-  .progress-bar-inner { background: #15803d; height: 10px; border-radius: 99px;
-                         transition: width .3s; }
+{% block title %}Review Record #{{ record.id }} | NMVITIS Title Entry Tool{% endblock %}
 
-  /* ── Field label with GT badge ───────────────────────────────────────── */
-  .field-label-row { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.75rem; }
-  .field-label-row > span { font-size: 0.8rem; color: #555; }
+{% block content %}
+<div class="page-wrap">
 
-  /* ── Image viewer ────────────────────────────────────────────────────── */
-  .image-container {
-    overflow: hidden; border: 1px solid #e2e8f0; border-radius: 6px;
-    background: #f0f2f5; cursor: grab; position: relative; max-height: 600px;
-    user-select: none;
-  }
-  .image-container.grabbing { cursor: grabbing; }
-  .image-container img {
-    display: block; max-width: 100%;
-    transform-origin: top left;
-    transition: transform 0.1s;
-    pointer-events: none;
-  }
-  .zoom-controls { display: flex; gap: 0.5rem; margin-top: 0.5rem; align-items: center; }
-  .zoom-btn { padding: 0.3rem 0.7rem; border: 1px solid #ccc; border-radius: 4px;
-              background: white; cursor: pointer; font-size: 0.9rem; font-weight: bold; }
-  .zoom-btn:hover { background: #f0f2f5; }
-  .zoom-label { font-size: 0.8rem; color: #666; }
-</style>
-</head>
-<body>
-<h1>✏ Review Record #{{ record.id }}</h1>
-
-<div class="toolbar">
-  <a href="/review">⬅ Back to List</a>
-  <a href="/annotate">🔍 Annotation Queue</a>
-  <a href="/training">🏭 Training</a>
-  <a href="/records/reorder">🔀 Reorder Records</a>
-  <a href="/layout-editor{% if record.state %}?state={{ record.state }}{% endif %}">🗺️ Layout Editor</a>
-  <a href="/api/generate-pdf/{{ record.id }}">⬇ Download PDF</a>
-  <a href="/api/generate-mv7/{{ record.id }}">📄 Generate MV-7</a>
-  <a href="/titles/{{ record.id }}/back">🔄 Back of Title</a>
-  <a href="/help">❓ Help</a>
-</div>
-
-<div class="layout">
-
-  <!-- Left: field correction form -->
-  <div class="card">
-    <h2>Field Corrections
-      {% if record.is_validated %}
-        <span class="badge badge-ok">Validated</span>
-      {% else %}
-        <span class="badge badge-err">Has Errors</span>
-      {% endif %}
-    </h2>
-
-    <!-- Annotation progress bar -->
-    <div class="progress-wrap">
-      <div class="progress-label">
-        Ground-truth annotations: <strong>{{ gt_count }}</strong> / {{ total_fields }} fields
-      </div>
-      <div class="progress-bar-outer">
-        <div class="progress-bar-inner"
-             style="width: {{ ((gt_count / total_fields) * 100) | round | int }}%"></div>
-      </div>
-    </div>
-
-    <form id="correction-form">
-      {% set field_labels = {
-        'state': 'State of Title',
-        'title_number': 'Title #',
-        'vin': 'VIN',
-        'vehicle_year': 'Year',
-        'make': 'Make',
-        'model': 'Model',
-        'body_style': 'Body Style',
-        'color': 'Color',
-        'odometer': 'Mileage (Odometer)',
-        'owner_name': 'Owner Name (from title)',
-        'owner_address': 'Owner Address',
-        'purchase_price': 'Purchase Price ($)',
-        'sale_date': 'Date of Sale (YYYY-MM-DD)',
-        'issue_date': 'Issue Date (YYYY-MM-DD)'
-      } %}
-
-      <h3 style="font-size:0.85rem;color:#003366;margin:0.75rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">📄 Title Info</h3>
-      {% for field in ['state','title_number','vin','vehicle_year','issue_date'] %}
-      {% if field in field_names %}
-      <div class="field-label-row">
-        <span>{{ field_labels.get(field, field) }}</span>
-        {% if field in gt_fields %}
-          <span class="badge badge-gt">✓ GT</span>
-        {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
-          <span class="badge badge-corr">corrected</span>
-        {% endif %}
-      </div>
-      <input type="text" name="field_{{ field }}"
-             placeholder="{{ record.get(field, '') or '' }}"
-             value="">
-      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
-      {% endif %}
-      {% endfor %}
-
-      <h3 style="font-size:0.85rem;color:#003366;margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">🚗 Vehicle Info</h3>
-      {% for field in ['make','model','body_style','color','odometer'] %}
-      {% if field in field_names %}
-      <div class="field-label-row">
-        <span>{{ field_labels.get(field, field) }}</span>
-        {% if field in gt_fields %}
-          <span class="badge badge-gt">✓ GT</span>
-        {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
-          <span class="badge badge-corr">corrected</span>
-        {% endif %}
-      </div>
-      <input type="text" name="field_{{ field }}"
-             placeholder="{{ record.get(field, '') or '' }}"
-             value="">
-      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
-      {% endif %}
-      {% endfor %}
-
-      <h3 style="font-size:0.85rem;color:#003366;margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">💰 Transaction Info</h3>
-      {% for field in ['owner_name','owner_address','purchase_price','sale_date'] %}
-      {% if field in field_names %}
-      <div class="field-label-row">
-        <span>{{ field_labels.get(field, field) }}</span>
-        {% if field in gt_fields %}
-          <span class="badge badge-gt">✓ GT</span>
-        {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
-          <span class="badge badge-corr">corrected</span>
-        {% endif %}
-      </div>
-      <input type="text" name="field_{{ field }}"
-             placeholder="{{ record.get(field, '') or '' }}"
-             value="">
-      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
-      {% endif %}
-      {% endfor %}
-
-      <input type="hidden" name="approve" id="approve-flag" value="">
-      <input type="hidden" name="bulk_approve" id="bulk-approve-flag" value="">
-
-      <div class="btn-row">
-        <button type="button" class="btn btn-save" onclick="saveCorrections(false, false)">💾 Save Corrections</button>
-        <button type="button" class="btn btn-approve" onclick="saveCorrections(true, false)">✅ Approve as Ground Truth</button>
-        <button type="button" class="btn btn-bulk-approve"
-                onclick="saveCorrections(false, true)">🏷 Mark All as Ground Truth</button>
-      </div>
-      <div id="save-status"></div>
-    </form>
-
-    <!-- Operational fields – saved directly, not part of AI training -->
-    {% set op_labels = {
-      'provider_id': 'Provider ID',
-      'state_of_plant': 'State of Plant',
-      'dismantler_license': 'Dismantler License #',
-      'plant_name': 'Plant / Yard Name',
-      'description': 'Description',
-      'condition': 'Condition',
-      'stock_number': 'Stock #',
-      'location_status': 'Location / Status',
-      'purchased_from': 'Purchased From',
-      'sold_to': 'Sold To'
-    } %}
-
-    <form id="operational-form" style="margin-top:1.25rem;">
-      <h3 style="font-size:0.85rem;color:#003366;margin:0 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">🏭 Operational Info</h3>
-      {% for field in operational_fields %}
-      <label style="display:block;font-size:0.8rem;color:#555;margin-top:0.75rem;">{{ op_labels.get(field, field) }}</label>
-      <input type="text" name="field_{{ field }}"
-             placeholder="{{ record.get(field, '') or '' }}"
-             value="">
-      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
-      {% endfor %}
-      <div class="btn-row" style="margin-top:0.75rem;">
-        <button type="button" class="btn btn-save" onclick="saveOperational()">💾 Save Operational Fields</button>
-      </div>
-      <div id="op-save-status"></div>
-    </form>
+  <div class="page-heading">
+    <h1>&#9998; Review Record #{{ record.id }}</h1>
+    <p class="page-hint">
+      Correct extracted fields on the left, verify against the source document on
+      the right. Mark fields as ground truth to include them in AI training.
+    </p>
   </div>
 
-  <!-- Right: image preview + correction history -->
-  <div>
-    {% if record.source_file_path %}
-    <div class="card" style="margin-bottom:1.5rem;">
-      <h2>Source Document</h2>
-      {% set fname = record.source_file_path.split('/')[-1] %}
-      {% if fname.endswith('.pdf') %}
-        <p style="font-size:0.85rem;color:#666;">PDF document — <a href="/uploads/{{ fname }}" target="_blank">Open PDF</a></p>
-      {% else %}
-        <div class="image-container" id="img-container">
-          <img src="/uploads/{{ fname }}" alt="Title document" id="zoom-img">
-        </div>
-        <div class="zoom-controls">
-          <button class="zoom-btn" onclick="zoomIn()">＋</button>
-          <button class="zoom-btn" onclick="zoomOut()">－</button>
-          <button class="zoom-btn" onclick="zoomReset()">⟳ Reset</button>
-          <span class="zoom-label" id="zoom-label">100%</span>
-        </div>
-      {% endif %}
-    </div>
-    {% endif %}
+  <!-- ── Tip card: annotation workflow ─────────────────────────────────── -->
+  <div class="info-banner" role="note">
+    <strong>Annotation workflow:</strong>
+    Edit any incorrect field &rarr; click <em>Save Corrections</em> to store
+    changes &rarr; click <em>&#10003; Approve All &amp; Mark Ground Truth</em>
+    to flag the record as verified training data.
+    Fields with a <span class="badge badge-gt">GT</span> badge have already been
+    approved. <span class="badge badge-corr">corrected</span> fields have been
+    changed but not yet approved.
+  </div>
 
-    <div class="card">
-      <h2>Correction History</h2>
-      {% if corrections %}
-      <div class="corrections-list">
-        {% for c in corrections %}
-        <div class="item">
-          <strong>{{ c.field_name }}</strong>:
-          <span style="color:#888;">{{ c.original_value or '—' }}</span>
-          → <span style="color:#15803d;">{{ c.corrected_value or '—' }}</span>
-          {% if c.is_ground_truth %}
-            <span class="badge badge-ok" style="margin-left:.4rem;">GT</span>
+  <div class="grid-2" style="align-items:start;">
+
+    <!-- ── Left panel: field correction form ───────────────────────────── -->
+    <div>
+
+      <div class="card">
+        <h2>
+          Field Corrections
+          {% if record.is_validated %}
+            <span class="badge badge-ok">&#10003; Validated</span>
+          {% else %}
+            <span class="badge badge-err">&#9888; Has Errors</span>
           {% endif %}
-          <div style="font-size:0.75rem;color:#aaa;">{{ c.created_at[:19] if c.created_at else '' }}</div>
+        </h2>
+
+        <!-- Annotation progress bar -->
+        <div class="annotation-progress">
+          <div class="progress-caption">
+            Ground-truth annotations:
+            <strong>{{ gt_count }}</strong> / {{ total_fields }} fields
+          </div>
+          <div class="bar-outer">
+            <div class="bar-inner"
+                 style="width:{{ ((gt_count / total_fields) * 100) | round | int }}%;"></div>
+          </div>
         </div>
-        {% endfor %}
+
+        {% set field_labels = {
+          'state':          'State of Title',
+          'title_number':   'Title #',
+          'vin':            'VIN',
+          'vehicle_year':   'Year',
+          'make':           'Make',
+          'model':          'Model',
+          'body_style':     'Body Style',
+          'color':          'Color',
+          'odometer':       'Mileage (Odometer)',
+          'owner_name':     'Owner Name (from title)',
+          'owner_address':  'Owner Address',
+          'purchase_price': 'Purchase Price ($)',
+          'sale_date':      'Date Entered (YYYY-MM-DD)',
+          'issue_date':     'Issue Date (YYYY-MM-DD)'
+        } %}
+
+        <form id="correction-form">
+
+          <h3>&#128196; Title Info</h3>
+          {% for field in ['state','title_number','vin','vehicle_year','issue_date'] %}
+          {% if field in field_names %}
+          <div class="field-label-row">
+            <span class="field-lbl">{{ field_labels.get(field, field) }}</span>
+            {% if field in gt_fields %}
+              <span class="badge badge-gt">&#10003; GT</span>
+            {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
+              <span class="badge badge-corr">corrected</span>
+            {% endif %}
+          </div>
+          <input type="text" name="field_{{ field }}"
+                 value="{{ record.get(field, '') or '' }}"
+                 {% if low_confidence is defined and field in low_confidence %}class="low-conf"{% endif %} />
+          <div style="font-size:0.72rem;color:var(--clr-text-faint);margin:0.1rem 0 0.25rem;">
+            Original: <strong>{{ record.get(field) or '&mdash;' }}</strong>
+          </div>
+          {% endif %}
+          {% endfor %}
+
+          <h3>&#128663; Vehicle Info</h3>
+          {% for field in ['make','model','body_style','color','odometer'] %}
+          {% if field in field_names %}
+          <div class="field-label-row">
+            <span class="field-lbl">{{ field_labels.get(field, field) }}</span>
+            {% if field in gt_fields %}
+              <span class="badge badge-gt">&#10003; GT</span>
+            {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
+              <span class="badge badge-corr">corrected</span>
+            {% endif %}
+          </div>
+          <input type="text" name="field_{{ field }}"
+                 value="{{ record.get(field, '') or '' }}"
+                 {% if low_confidence is defined and field in low_confidence %}class="low-conf"{% endif %} />
+          <div style="font-size:0.72rem;color:var(--clr-text-faint);margin:0.1rem 0 0.25rem;">
+            Original: <strong>{{ record.get(field) or '&mdash;' }}</strong>
+          </div>
+          {% endif %}
+          {% endfor %}
+
+          <h3>&#128176; Transaction Info</h3>
+          {% for field in ['owner_name','owner_address','purchase_price','sale_date'] %}
+          {% if field in field_names %}
+          <div class="field-label-row">
+            <span class="field-lbl">{{ field_labels.get(field, field) }}</span>
+            {% if field in gt_fields %}
+              <span class="badge badge-gt">&#10003; GT</span>
+            {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
+              <span class="badge badge-corr">corrected</span>
+            {% endif %}
+          </div>
+          <input type="text" name="field_{{ field }}"
+                 value="{{ record.get(field, '') or '' }}"
+                 {% if low_confidence is defined and field in low_confidence %}class="low-conf"{% endif %} />
+          <div style="font-size:0.72rem;color:var(--clr-text-faint);margin:0.1rem 0 0.25rem;">
+            Original: <strong>{{ record.get(field) or '&mdash;' }}</strong>
+          </div>
+          {% endif %}
+          {% endfor %}
+
+          <input type="hidden" name="approve"      id="approve-flag"      value="" />
+          <input type="hidden" name="bulk_approve" id="bulk-approve-flag" value="" />
+
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary"
+                    onclick="saveCorrections(false, false)">
+              &#128190; Save Corrections
+            </button>
+            <button type="button" class="btn btn-success"
+                    onclick="saveCorrections(true, false)">
+              &#10003; Approve as Ground Truth
+            </button>
+            <button type="button" class="btn btn-info"
+                    onclick="saveCorrections(false, true)">
+              &#127991; Mark All as Ground Truth
+            </button>
+          </div>
+          <div id="save-status"
+               style="font-size:0.875rem;font-weight:700;margin-top:0.5rem;"></div>
+        </form>
       </div>
-      {% else %}
-      <p style="color:#999;font-size:0.85rem;">No corrections yet.</p>
-      {% endif %}
+
+      <!-- ── Operational fields ─────────────────────────────────────────── -->
+      {% set op_labels = {
+        'provider_id':       'Provider ID',
+        'state_of_plant':    'State of Plant',
+        'dismantler_license':'Dismantler License #',
+        'plant_name':        'Plant / Yard Name',
+        'description':       'Description',
+        'condition':         'Condition',
+        'stock_number':      'Stock #',
+        'location_status':   'Location / Status',
+        'purchased_from':    'Purchased From',
+        'sold_to':           'Sold To'
+      } %}
+      <div class="card">
+        <h2>&#127981; Operational Info</h2>
+        <p class="field-hint" style="margin-bottom:0.75rem;">
+          These fields are not part of AI training — they are saved directly.
+        </p>
+        <form id="operational-form">
+          {% for field in operational_fields %}
+          <div class="form-field">
+            <label>{{ op_labels.get(field, field) }}</label>
+            <input type="text" name="field_{{ field }}"
+                   value="{{ record.get(field, '') or '' }}" />
+          </div>
+          {% endfor %}
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary"
+                    onclick="saveOperational()">
+              &#128190; Save Operational Fields
+            </button>
+          </div>
+          <div id="op-save-status"
+               style="font-size:0.875rem;font-weight:700;margin-top:0.5rem;"></div>
+        </form>
+      </div>
+
+      <!-- ── Quick actions ───────────────────────────────────────────────── -->
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.25rem;">
+        <a href="/api/generate-pdf/{{ record.id }}" class="btn btn-ghost btn-sm">
+          &#8595; Download PDF
+        </a>
+        <a href="/api/generate-mv7/{{ record.id }}" class="btn btn-ghost btn-sm">
+          &#128196; Generate MV-7
+        </a>
+        <a href="/titles/{{ record.id }}/back" class="btn btn-ghost btn-sm">
+          &#128260; Back of Title
+        </a>
+        <a href="/layout-editor{% if record.state %}?state={{ record.state }}{% endif %}"
+           class="btn btn-ghost btn-sm">
+          &#128506; Layout Editor
+        </a>
+      </div>
     </div>
+
+    <!-- ── Right panel: source image + correction history ──────────────── -->
+    <div>
+      {% if record.source_file_path %}
+      <div class="card" style="margin-bottom:1.25rem;">
+        <h2>Source Document</h2>
+        {% set fname = record.source_file_path.split('/')[-1] %}
+        {% if fname.endswith('.pdf') %}
+          <p style="font-size:0.875rem;color:var(--clr-text-muted);">
+            PDF document &mdash;
+            <a href="/uploads/{{ fname }}" target="_blank">Open PDF &#8599;</a>
+          </p>
+        {% else %}
+          <div class="image-container" id="img-container">
+            <img src="/uploads/{{ fname }}" alt="Title document" id="zoom-img" />
+          </div>
+          <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomIn()">&#65291;</button>
+            <button class="zoom-btn" onclick="zoomOut()">&#65293;</button>
+            <button class="zoom-btn" onclick="zoomReset()">&#8634; Reset</button>
+            <span class="zoom-label" id="zoom-label">100%</span>
+          </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <h2>Correction History</h2>
+        {% if corrections %}
+        <div style="font-size:0.82rem;">
+          {% for c in corrections %}
+          <div style="padding:0.4rem 0;border-bottom:1px solid var(--clr-border);">
+            <strong>{{ c.field_name }}</strong>:
+            <span style="color:var(--clr-text-faint);">{{ c.original_value or '&mdash;' }}</span>
+            &rarr;
+            <span style="color:#15803d;">{{ c.corrected_value or '&mdash;' }}</span>
+            {% if c.is_ground_truth %}
+              <span class="badge badge-gt" style="margin-left:0.4rem;">GT</span>
+            {% endif %}
+            <div style="font-size:0.72rem;color:var(--clr-text-faint);">
+              {{ c.created_at[:19] if c.created_at else '' }}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--clr-text-faint);font-size:0.875rem;">No corrections yet.</p>
+        {% endif %}
+      </div>
+    </div>
+
   </div>
-
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
-/* ── Image zoom / pan ────────────────────────────────────────────────────── */
+/* ── Image zoom / pan ──────────────────────────────────────────────────── */
 (function () {
   var container = document.getElementById('img-container');
-  var img = document.getElementById('zoom-img');
+  var img       = document.getElementById('zoom-img');
   if (!container || !img) return;
 
   var scale = 1, minScale = 0.5, maxScale = 4;
@@ -283,8 +275,10 @@
   var dragging = false, startX, startY, startPanX, startPanY;
 
   function applyTransform() {
-    img.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
-    document.getElementById('zoom-label').textContent = Math.round(scale * 100) + '%';
+    img.style.transform =
+      'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+    var lbl = document.getElementById('zoom-label');
+    if (lbl) lbl.textContent = Math.round(scale * 100) + '%';
   }
 
   container.addEventListener('wheel', function (e) {
@@ -318,43 +312,41 @@
   window.zoomReset = function () { scale = 1; panX = 0; panY = 0; applyTransform(); };
 }());
 
-/* ── Correction save ─────────────────────────────────────────────────────── */
+/* ── Correction save ────────────────────────────────────────────────────── */
 async function saveCorrections(approve, bulkApprove) {
-  const form = document.getElementById('correction-form');
-  document.getElementById('approve-flag').value = approve ? '1' : '';
+  var form = document.getElementById('correction-form');
+  document.getElementById('approve-flag').value      = approve ? '1' : '';
   document.getElementById('bulk-approve-flag').value = bulkApprove ? '1' : '';
-  const data = new FormData(form);
-
-  const resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
-  const json = await resp.json();
-  const el = document.getElementById('save-status');
+  var data = new FormData(form);
+  var resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
+  var json = await resp.json();
+  var el   = document.getElementById('save-status');
   if (resp.ok) {
-    el.style.color = '#15803d';
-    const gtLabel = (approve || bulkApprove) ? ' as ground truth' : '';
-    el.textContent = `✔ ${json.saved} correction(s) saved${gtLabel}.`;
-    setTimeout(() => location.reload(), 1200);
+    el.style.color = 'var(--badge-ok-text)';
+    var gtLabel = (approve || bulkApprove) ? ' as ground truth' : '';
+    el.textContent = '\u2714 ' + json.saved + ' correction(s) saved' + gtLabel + '.';
+    setTimeout(function () { location.reload(); }, 1200);
   } else {
-    el.style.color = '#991b1b';
+    el.style.color = 'var(--badge-err-text)';
     el.textContent = 'Error saving corrections.';
   }
 }
 
-/* ── Operational fields save ─────────────────────────────────────────────── */
+/* ── Operational fields save ────────────────────────────────────────────── */
 async function saveOperational() {
-  const form = document.getElementById('operational-form');
-  const data = new FormData(form);
-  const el = document.getElementById('op-save-status');
-  const resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
-  const json = await resp.json();
+  var form = document.getElementById('operational-form');
+  var data = new FormData(form);
+  var el   = document.getElementById('op-save-status');
+  var resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
+  var json = await resp.json();
   if (resp.ok) {
-    el.style.color = '#15803d';
-    el.textContent = '✔ Operational fields saved.';
-    setTimeout(() => location.reload(), 1200);
+    el.style.color = 'var(--badge-ok-text)';
+    el.textContent = '\u2714 Operational fields saved.';
+    setTimeout(function () { location.reload(); }, 1200);
   } else {
-    el.style.color = '#991b1b';
+    el.style.color = 'var(--badge-err-text)';
     el.textContent = 'Error saving operational fields.';
   }
 }
 </script>
-</body>
-</html>
+{% endblock %}
