@@ -40,8 +40,10 @@ from title_entry_tool import (
     list_ground_truth_corrections,
     list_model_definitions,
     list_records,
+    list_records_for_reorder,
     list_training_runs,
     set_app_setting,
+    update_record_sort_orders,
     update_title_record_fields,
     upsert_model_definition,
     export_validated_to_csv_by_date,
@@ -67,6 +69,20 @@ except ValueError:
 
 # All field names recognised by the extraction pipeline (core + extended).
 _FIELD_NAMES: Tuple[str, ...] = AI_ALL_FIELDS
+
+# Operational fields manually entered by staff (never AI-extracted).
+_OPERATIONAL_FIELDS: Tuple[str, ...] = (
+    "provider_id",
+    "state_of_plant",
+    "dismantler_license",
+    "plant_name",
+    "description",
+    "condition",
+    "stock_number",
+    "location_status",
+    "purchased_from",
+    "sold_to",
+)
 
 # AI readiness cache – avoids a network probe on every page load.
 _AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
@@ -1067,6 +1083,126 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
         return render_template("index.html", **context)
 
+    # ── Manual record creation ────────────────────────────────────────────────
+
+    @app.route("/records/new", methods=["GET"])
+    def new_record_form():
+        """Render the manual record creation form."""
+        return render_template(
+            "new_record.html",
+            default_state=app.config["DEFAULT_STATE"],
+            field_names=list(_FIELD_NAMES),
+            operational_fields=list(_OPERATIONAL_FIELDS),
+        )
+
+    @app.route("/api/records", methods=["POST"])
+    def create_record():
+        """Create a new title record from form data (manual entry).
+
+        An optional file upload is accepted but not required.
+        """
+        def _form_str(key: str) -> Optional[str]:
+            v = request.form.get(key, "").strip()
+            return v or None
+
+        def _form_int(key: str) -> Optional[int]:
+            v = request.form.get(key, "").strip()
+            try:
+                return int(v) if v else None
+            except ValueError:
+                return None
+
+        def _form_float(key: str) -> Optional[float]:
+            v = request.form.get(key, "").strip()
+            try:
+                return float(v) if v else None
+            except ValueError:
+                return None
+
+        state = (_form_str("state") or app.config["DEFAULT_STATE"]).upper()
+        title_number = _form_str("title_number") or ""
+        vin = _form_str("vin") or ""
+        vehicle_year = _form_int("vehicle_year") or MISSING_YEAR_SENTINEL
+
+        source_file_path = None
+        upload = request.files.get("file")
+        if upload and upload.filename and allowed_file(upload.filename):
+            file_bytes = upload.read()
+            if file_bytes:
+                source_file_path = _save_upload(file_bytes, upload.filename)
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            record = insert_title_record(
+                connection=connection,
+                state=state,
+                title_number=title_number,
+                vin=vin,
+                vehicle_year=vehicle_year,
+                make=_form_str("make"),
+                model=_form_str("model"),
+                body_style=_form_str("body_style"),
+                color=_form_str("color"),
+                odometer=_form_int("odometer"),
+                owner_name=_form_str("owner_name"),
+                owner_address=_form_str("owner_address"),
+                purchase_price=_form_float("purchase_price"),
+                sale_date=_form_str("sale_date"),
+                issue_date=_form_str("issue_date"),
+                provider_id=_form_str("provider_id"),
+                state_of_plant=_form_str("state_of_plant"),
+                dismantler_license=_form_str("dismantler_license"),
+                plant_name=_form_str("plant_name"),
+                description=_form_str("description"),
+                condition=_form_str("condition"),
+                stock_number=_form_str("stock_number"),
+                location_status=_form_str("location_status"),
+                purchased_from=_form_str("purchased_from"),
+                sold_to=_form_str("sold_to"),
+                source_file_path=source_file_path,
+            )
+        finally:
+            connection.close()
+
+        return redirect(url_for("review_record", record_id=record["id"]))
+
+    # ── Record reordering ─────────────────────────────────────────────────────
+
+    @app.route("/records/reorder", methods=["GET"])
+    def reorder_records_page():
+        """Render the drag-and-drop record reorder page."""
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            records = list_records_for_reorder(connection)
+        finally:
+            connection.close()
+        return render_template("reorder.html", records=records)
+
+    @app.route("/api/records/reorder", methods=["POST"])
+    def api_reorder_records():
+        """Accept a JSON array of {id, sort_order} pairs and persist the new order.
+
+        Request body example::
+
+            [{"id": 3, "sort_order": 1}, {"id": 1, "sort_order": 2}]
+        """
+        data = request.get_json(silent=True)
+        if not isinstance(data, list):
+            return jsonify({"error": "Expected a JSON array."}), 400
+        try:
+            orders = [{"id": int(item["id"]), "sort_order": int(item["sort_order"])} for item in data]
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "Each item must have integer 'id' and 'sort_order'."}), 400
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            update_record_sort_orders(connection, orders)
+        finally:
+            connection.close()
+        return jsonify({"saved": len(orders)})
+
     # ── Review / annotation endpoints ─────────────────────────────────────────
 
     @app.route("/review")
@@ -1103,6 +1239,8 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                 corrections_saved = 0
                 source_path = record.get("source_file_path") or ""
                 corrected_fields: Dict[str, Any] = {}
+
+                # AI-extractable fields go through the corrections/training workflow.
                 for field in _FIELD_NAMES:
                     corrected = request.form.get(f"field_{field}", "").strip()
                     if corrected:
@@ -1117,6 +1255,13 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                         )
                         corrected_fields[field] = corrected
                         corrections_saved += 1
+
+                # Operational fields are saved directly (not AI-training data).
+                for field in _OPERATIONAL_FIELDS:
+                    value = request.form.get(f"field_{field}", "").strip()
+                    if value:
+                        corrected_fields[field] = value
+
                 if corrected_fields:
                     update_title_record_fields(connection, record_id, corrected_fields)
                 return jsonify({"saved": corrections_saved}), 200
@@ -1134,6 +1279,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             record=record,
             corrections=corrections,
             field_names=list(_FIELD_NAMES),
+            operational_fields=list(_OPERATIONAL_FIELDS),
             gt_fields=gt_fields,
             gt_count=gt_count,
             total_fields=len(_FIELD_NAMES),
@@ -1195,6 +1341,37 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             pdf_path = generate_nmvitis_pdf(record, output_dir=PDFS_DIR)
         except Exception:
             return jsonify({"error": "PDF generation failed. Check server logs."}), 500
+
+        return send_file(
+            pdf_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=os.path.basename(pdf_path),
+        )
+
+    # ── MV-7 form generation endpoint ─────────────────────────────────────────
+
+    @app.route("/api/generate-mv7/<int:record_id>")
+    def generate_mv7(record_id: int):
+        """Fill and return the MV-7 Scrap/Salvage Certificate PDF for a record."""
+        from pdf_generator import generate_mv7_pdf
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            record = get_record_by_id(connection, record_id)
+        finally:
+            connection.close()
+
+        if record is None:
+            return jsonify({"error": "Record not found."}), 404
+
+        try:
+            pdf_path = generate_mv7_pdf(record, output_dir=PDFS_DIR)
+        except FileNotFoundError:
+            return jsonify({"error": "Blank MV-7 form not found on server."}), 500
+        except Exception:
+            return jsonify({"error": "MV-7 generation failed. Check server logs."}), 500
 
         return send_file(
             pdf_path,

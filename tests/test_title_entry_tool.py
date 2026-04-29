@@ -17,8 +17,10 @@ from title_entry_tool import (
     insert_title_record,
     insert_training_run,
     list_model_definitions,
+    list_records_for_reorder,
     list_training_runs,
     set_app_setting,
+    update_record_sort_orders,
     update_title_record_fields,
     upsert_model_definition,
     validate_record,
@@ -78,8 +80,9 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual("ABC1234", params[1])
         self.assertEqual("1HGCM82633A004352", params[2])
         self.assertEqual(2003, params[3])
-        # is_validated is now at index 17 (after 14 extended fields + state_layout_version + source_file_path + ocr_text)
-        self.assertEqual(1, params[17])  # is_validated
+        # is_validated is at index 28 (4 core + 10 NMVITIS extended + 11 operational
+        # + state_layout_version + source_file_path + ocr_text = indices 0-27, then 28)
+        self.assertEqual(1, params[28])  # is_validated
 
     def test_insert_title_record_marks_invalid_record(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(7,))
@@ -100,12 +103,21 @@ class TitleEntryToolTests(unittest.TestCase):
 
         call_args = cursor.execute.call_args
         params = call_args[0][1]
-        self.assertEqual(0, params[17])  # is_validated
-        self.assertIn("VIN must be exactly 17 characters", params[18])  # validation_errors
+        self.assertEqual(0, params[28])  # is_validated
+        self.assertIn("VIN must be exactly 17 characters", params[29])  # validation_errors
 
     def test_export_validated_to_csv_only_exports_valid_records(self) -> None:
         fake_rows = [
-            {"state": "NM", "title_number": "NM001", "vin": "1HGCM82633A004352", "vehicle_year": 2003},
+            {
+                "provider_id": "P001", "vin": "1HGCM82633A004352",
+                "title_number": "NM001", "state": "NM", "state_of_plant": "NM",
+                "dismantler_license": "DL123", "plant_name": "Test Yard",
+                "make": "HONDA", "model": "ACCORD", "vehicle_year": 2003,
+                "odometer": 85000, "description": None, "condition": "Salvage",
+                "stock_number": "S001", "location_status": "In Yard",
+                "purchased_from": "Auction", "created_at": "2024-01-01T00:00:00",
+                "sold_to": None,
+            },
         ]
         connection, _ = _make_connection(cursor_rows=fake_rows)
 
@@ -120,6 +132,8 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual(1, len(rows))
         self.assertEqual("NM", rows[0]["state"])
         self.assertEqual("NM001", rows[0]["title_number"])
+        self.assertEqual("P001", rows[0]["provider_id"])
+        self.assertEqual("S001", rows[0]["stock_number"])
 
     def test_insert_title_record_stores_extended_fields(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(99,))
@@ -151,6 +165,78 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual("SDN", params[6])     # body_style
         self.assertEqual("SILVER", params[7])  # color
         self.assertEqual(85000, params[8])     # odometer
+
+    def test_insert_title_record_stores_operational_fields(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(77,))
+
+        result = insert_title_record(
+            connection,
+            state="NM",
+            title_number="OP1234",
+            vin="1HGCM82633A004352",
+            vehicle_year=2003,
+            provider_id="PROV01",
+            state_of_plant="NM",
+            dismantler_license="DL9999",
+            plant_name="Test Yard",
+            description="Blue sedan, front damage",
+            condition="Salvage",
+            stock_number="S-100",
+            location_status="In Yard",
+            purchased_from="ABC Auction",
+            sold_to="Recycler LLC",
+        )
+
+        self.assertTrue(result["is_validated"])
+        call_args = cursor.execute.call_args
+        params = call_args[0][1]
+        # Operational fields start at index 14 (after 14 NMVITIS fields)
+        self.assertEqual("PROV01", params[14])       # provider_id
+        self.assertEqual("NM", params[15])            # state_of_plant
+        self.assertEqual("DL9999", params[16])        # dismantler_license
+        self.assertEqual("Test Yard", params[17])     # plant_name
+        self.assertEqual("Blue sedan, front damage", params[18])  # description
+        self.assertEqual("Salvage", params[19])       # condition
+        self.assertEqual("S-100", params[20])         # stock_number
+        self.assertEqual("In Yard", params[21])       # location_status
+        self.assertEqual("ABC Auction", params[22])   # purchased_from
+        self.assertEqual("Recycler LLC", params[23])  # sold_to
+
+    def test_update_record_sort_orders_executes_updates(self) -> None:
+        connection, cursor = _make_connection()
+        orders = [{"id": 3, "sort_order": 1}, {"id": 1, "sort_order": 2}]
+        update_record_sort_orders(connection, orders)
+        connection.commit.assert_called_once()
+        # Two UPDATE statements should have been called
+        execute_calls = cursor.execute.call_args_list
+        self.assertEqual(2, len(execute_calls))
+        for call in execute_calls:
+            sql = call[0][0]
+            self.assertIn("sort_order", sql)
+
+    def test_list_records_for_reorder_returns_rows(self) -> None:
+        fake_rows = [
+            {"id": 1, "state": "NM", "title_number": "T1", "vin": "1HGCM82633A004352",
+             "vehicle_year": 2003, "make": "HONDA", "model": "ACCORD",
+             "stock_number": "S001", "sort_order": 1},
+        ]
+        connection, _ = _make_connection(cursor_rows=fake_rows)
+        records = list_records_for_reorder(connection)
+        self.assertEqual(1, len(records))
+        self.assertEqual("S001", records[0]["stock_number"])
+
+    def test_initialize_database_includes_new_operational_columns(self) -> None:
+        connection, cursor = _make_connection()
+        initialize_database(connection)
+        sql_parts = []
+        for call in cursor.execute.call_args_list:
+            arg = call[0][0]
+            sql_parts.append(str(arg) if isinstance(arg, str) else repr(arg))
+        all_sql = " ".join(sql_parts)
+        # Verify new operational columns are part of the schema setup.
+        for col in ("provider_id", "state_of_plant", "dismantler_license",
+                    "plant_name", "stock_number", "sort_order"):
+            self.assertIn(col, all_sql, msg=f"Column '{col}' not found in DB init SQL")
 
     def test_insert_correction_calls_execute(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(1,))
@@ -355,6 +441,61 @@ class ModelDefinitionsTests(unittest.TestCase):
         rows = list_model_definitions(connection)
         self.assertEqual(1, len(rows))
         self.assertEqual("titles-custom", rows[0]["model_name"])
+
+
+class MV7PdfTests(unittest.TestCase):
+    """Tests for generate_mv7_pdf in pdf_generator."""
+
+    def test_generate_mv7_raises_when_blank_form_missing(self) -> None:
+        from pdf_generator import generate_mv7_pdf
+
+        record = {
+            "id": 1, "state": "NM", "title_number": "12345678",
+            "vin": "1HGCM82633A004352", "owner_name": "DOE JOHN",
+            "plant_name": "Test Yard", "dismantler_license": "DL001",
+            "provider_id": "P001", "sale_date": "2024-01-15",
+            "issue_date": None,
+        }
+        with mock.patch("pdf_generator._MV7_BLANK", "/nonexistent/blank.pdf"):
+            with self.assertRaises(FileNotFoundError):
+                generate_mv7_pdf(record, output_dir="/tmp")
+
+    def test_generate_mv7_raises_for_invalid_row(self) -> None:
+        from pdf_generator import generate_mv7_pdf
+
+        record = {"id": 1, "state": "NM", "title_number": "T1", "vin": "X" * 17}
+        with self.assertRaises(ValueError):
+            generate_mv7_pdf(record, output_dir="/tmp", row=0)
+        with self.assertRaises(ValueError):
+            generate_mv7_pdf(record, output_dir="/tmp", row=31)
+
+    def test_generate_mv7_fills_form_and_returns_path(self) -> None:
+        """Integration test: fill the real blank MV-7 form and verify the output."""
+        import os
+        import tempfile
+
+        from pdf_generator import generate_mv7_pdf, _MV7_BLANK
+
+        if not os.path.exists(_MV7_BLANK):
+            self.skipTest("BLANK-MV7-FORM.pdf not present in this environment")
+
+        record = {
+            "id": 999,
+            "state": "NM",
+            "title_number": "88776655",
+            "vin": "1HGCM82633A004352",
+            "owner_name": "DOE JOHN",
+            "plant_name": "My Test Yard",
+            "dismantler_license": "DL1234",
+            "provider_id": "PROV99",
+            "sale_date": "2024-06-01",
+            "issue_date": None,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = generate_mv7_pdf(record, output_dir=tmpdir, row=1)
+            self.assertTrue(os.path.isfile(path))
+            self.assertIn("mv7_999", os.path.basename(path))
+            self.assertGreater(os.path.getsize(path), 0)
 
 
 if __name__ == "__main__":

@@ -80,8 +80,10 @@
   <a href="/review">⬅ Back to List</a>
   <a href="/annotate">🔍 Annotation Queue</a>
   <a href="/training">🏭 Training</a>
+  <a href="/records/reorder">🔀 Reorder Records</a>
   <a href="/layout-editor{% if record.state %}?state={{ record.state }}{% endif %}">🗺️ Layout Editor</a>
   <a href="/api/generate-pdf/{{ record.id }}">⬇ Download PDF</a>
+  <a href="/api/generate-mv7/{{ record.id }}">📄 Generate MV-7</a>
   <a href="/titles/{{ record.id }}/back">🔄 Back of Title</a>
   <a href="/help">❓ Help</a>
 </div>
@@ -111,23 +113,25 @@
 
     <form id="correction-form">
       {% set field_labels = {
-        'state': 'State',
-        'title_number': 'Title Number',
+        'state': 'State of Title',
+        'title_number': 'Title #',
         'vin': 'VIN',
-        'vehicle_year': 'Vehicle Year',
+        'vehicle_year': 'Year',
         'make': 'Make',
         'model': 'Model',
         'body_style': 'Body Style',
         'color': 'Color',
-        'odometer': 'Odometer (miles)',
-        'owner_name': 'Owner Name',
+        'odometer': 'Mileage (Odometer)',
+        'owner_name': 'Owner Name (from title)',
         'owner_address': 'Owner Address',
-        'purchase_price': 'Purchase Price',
+        'purchase_price': 'Purchase Price ($)',
         'sale_date': 'Date of Sale (YYYY-MM-DD)',
         'issue_date': 'Issue Date (YYYY-MM-DD)'
       } %}
 
-      {% for field in field_names %}
+      <h3 style="font-size:0.85rem;color:#003366;margin:0.75rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">📄 Title Info</h3>
+      {% for field in ['state','title_number','vin','vehicle_year','issue_date'] %}
+      {% if field in field_names %}
       <div class="field-label-row">
         <span>{{ field_labels.get(field, field) }}</span>
         {% if field in gt_fields %}
@@ -140,6 +144,43 @@
              placeholder="{{ record.get(field, '') or '' }}"
              value="">
       <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
+      {% endif %}
+      {% endfor %}
+
+      <h3 style="font-size:0.85rem;color:#003366;margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">🚗 Vehicle Info</h3>
+      {% for field in ['make','model','body_style','color','odometer'] %}
+      {% if field in field_names %}
+      <div class="field-label-row">
+        <span>{{ field_labels.get(field, field) }}</span>
+        {% if field in gt_fields %}
+          <span class="badge badge-gt">✓ GT</span>
+        {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
+          <span class="badge badge-corr">corrected</span>
+        {% endif %}
+      </div>
+      <input type="text" name="field_{{ field }}"
+             placeholder="{{ record.get(field, '') or '' }}"
+             value="">
+      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
+      {% endif %}
+      {% endfor %}
+
+      <h3 style="font-size:0.85rem;color:#003366;margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">💰 Transaction Info</h3>
+      {% for field in ['owner_name','owner_address','purchase_price','sale_date'] %}
+      {% if field in field_names %}
+      <div class="field-label-row">
+        <span>{{ field_labels.get(field, field) }}</span>
+        {% if field in gt_fields %}
+          <span class="badge badge-gt">✓ GT</span>
+        {% elif corrections | selectattr('field_name', 'equalto', field) | list | length > 0 %}
+          <span class="badge badge-corr">corrected</span>
+        {% endif %}
+      </div>
+      <input type="text" name="field_{{ field }}"
+             placeholder="{{ record.get(field, '') or '' }}"
+             value="">
+      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
+      {% endif %}
       {% endfor %}
 
       <input type="hidden" name="approve" id="approve-flag" value="">
@@ -152,6 +193,35 @@
                 onclick="saveCorrections(false, true)">🏷 Mark All as Ground Truth</button>
       </div>
       <div id="save-status"></div>
+    </form>
+
+    <!-- Operational fields – saved directly, not part of AI training -->
+    {% set op_labels = {
+      'provider_id': 'Provider ID',
+      'state_of_plant': 'State of Plant',
+      'dismantler_license': 'Dismantler License #',
+      'plant_name': 'Plant / Yard Name',
+      'description': 'Description',
+      'condition': 'Condition',
+      'stock_number': 'Stock #',
+      'location_status': 'Location / Status',
+      'purchased_from': 'Purchased From',
+      'sold_to': 'Sold To'
+    } %}
+
+    <form id="operational-form" style="margin-top:1.25rem;">
+      <h3 style="font-size:0.85rem;color:#003366;margin:0 0 0.5rem;text-transform:uppercase;letter-spacing:.04em;">🏭 Operational Info</h3>
+      {% for field in operational_fields %}
+      <label style="display:block;font-size:0.8rem;color:#555;margin-top:0.75rem;">{{ op_labels.get(field, field) }}</label>
+      <input type="text" name="field_{{ field }}"
+             placeholder="{{ record.get(field, '') or '' }}"
+             value="">
+      <div class="original">Current: <strong>{{ record.get(field) or '—' }}</strong></div>
+      {% endfor %}
+      <div class="btn-row" style="margin-top:0.75rem;">
+        <button type="button" class="btn btn-save" onclick="saveOperational()">💾 Save Operational Fields</button>
+      </div>
+      <div id="op-save-status"></div>
     </form>
   </div>
 
@@ -266,6 +336,23 @@ async function saveCorrections(approve, bulkApprove) {
   } else {
     el.style.color = '#991b1b';
     el.textContent = 'Error saving corrections.';
+  }
+}
+
+/* ── Operational fields save ─────────────────────────────────────────────── */
+async function saveOperational() {
+  const form = document.getElementById('operational-form');
+  const data = new FormData(form);
+  const el = document.getElementById('op-save-status');
+  const resp = await fetch('/review/{{ record.id }}', { method: 'POST', body: data });
+  const json = await resp.json();
+  if (resp.ok) {
+    el.style.color = '#15803d';
+    el.textContent = '✔ Operational fields saved.';
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    el.style.color = '#991b1b';
+    el.textContent = 'Error saving operational fields.';
   }
 }
 </script>

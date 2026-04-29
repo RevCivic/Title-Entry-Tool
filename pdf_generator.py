@@ -4,11 +4,15 @@ Produces a single-page PDF for each title record that can be submitted
 to NMVITIS for record-keeping.  Files are named
 ``{state}_{title_number}_{vin}.pdf`` and saved to the configured data
 directory.
+
+Also provides :func:`generate_mv7_pdf` which fills the Pennsylvania MV-7
+Scrap/Salvage Certificate form (``BLANK-MV7-FORM.pdf``) for a single record.
 """
 
 import os
 from typing import Any, Dict, Optional
 
+import fitz  # PyMuPDF
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet
@@ -27,6 +31,11 @@ from reportlab.platypus import (
 
 _DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 _PDF_DIR = os.path.join(_DATA_DIR, "pdfs")
+
+# Path to the blank MV-7 form shipped with the application.
+_MV7_BLANK = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "BLANK-MV7-FORM.pdf"
+)
 
 # NMVITIS field display labels in submission order.
 _FIELD_LABELS: Dict[str, str] = {
@@ -179,3 +188,120 @@ def generate_nmvitis_pdf(
 
     doc.build(elements)
     return path
+
+
+# ---------------------------------------------------------------------------
+# MV-7 form generation
+# ---------------------------------------------------------------------------
+
+# Mapping from record field names to MV-7 AcroForm field names.
+# The MV-7 form contains 30 numbered rows (01-30); each row has:
+#   State{nn}               – two-letter state of title
+#   "Pennsylvania and/or …{nn}" – title/certificate number
+#   "Enter first eight …{nn}"   – first 8 chars of owner last name / business name
+#   "Date flattened …{nn}"      – date processed
+# Header fields:
+#   Text1 – licensed dealer/business name (plant_name)
+#   Text2 – MV agent/license number (dismantler_license)
+#   Text3 – NMVITIS provider ID (provider_id)
+#   "Street Address City State Zip Code" – dealer address
+_MV7_TITLE_NUMBER_FIELD = (
+    "Pennsylvania andor OutofState Certificate of TitleSalvage or "
+    "Pennsylvania Nonrepairable Certificate Number Do not include letter{nn}"
+)
+_MV7_OWNER_FIELD = (
+    "Enter first eight letters of last name or business name of original title holder{nn}"
+)
+_MV7_DATE_FIELD = "Date flattened crushed or processed{nn}"
+_MV7_STATE_FIELD = "State{nn}"
+
+
+def _mv7_output_path(record: Dict[str, Any], output_dir: Optional[str] = None) -> str:
+    """Return a deterministic output path for the filled MV-7 PDF."""
+    record_id = record.get("id") or "unknown"
+    vin = _safe_str(record.get("vin")) or "UNKNOWN"
+    filename = f"mv7_{record_id}_{vin}.pdf"
+    directory = output_dir or _PDF_DIR
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, filename)
+
+
+def generate_mv7_pdf(
+    record: Dict[str, Any],
+    output_dir: Optional[str] = None,
+    row: int = 1,
+) -> str:
+    """Fill the MV-7 Scrap/Salvage Certificate form for a single record.
+
+    Opens ``BLANK-MV7-FORM.pdf`` (shipped with the application), fills the
+    AcroForm fields for *row* (1–30, default 1) with data from *record*, and
+    saves the result to *output_dir*.
+
+    Parameters
+    ----------
+    record:
+        Title record dict (from ``get_record_by_id``).
+    output_dir:
+        Directory to write the PDF.  Defaults to ``/app/data/pdfs``.
+    row:
+        Which table row (1–30) to populate.  Defaults to 1.
+
+    Returns
+    -------
+    str
+        Absolute path of the generated PDF file.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``BLANK-MV7-FORM.pdf`` is not found.
+    ValueError
+        If *row* is outside 1–30.
+    """
+    if not 1 <= row <= 30:
+        raise ValueError(f"row must be between 1 and 30, got {row}")
+
+    if not os.path.exists(_MV7_BLANK):
+        raise FileNotFoundError(f"Blank MV-7 form not found at {_MV7_BLANK}")
+
+    doc = fitz.open(_MV7_BLANK)
+    page = doc[0]
+
+    # ── Header fields ────────────────────────────────────────────────────────
+    plant = _safe_str(record.get("plant_name"))
+    dismantler_lic = _safe_str(record.get("dismantler_license"))
+    provider = _safe_str(record.get("provider_id"))
+
+    _set_widget(page, "Text1", plant)
+    _set_widget(page, "Text2", dismantler_lic)
+    _set_widget(page, "Text3", provider)
+
+    # ── Row fields ───────────────────────────────────────────────────────────
+    nn = f"{row:02d}"
+    state_val = _safe_str(record.get("state"))
+    title_number_val = _safe_str(record.get("title_number"))
+    owner_val = (_safe_str(record.get("owner_name")) or "")[:8].upper()
+    # Prefer sale_date, fall back to issue_date or today.
+    date_val = (
+        _safe_str(record.get("sale_date"))
+        or _safe_str(record.get("issue_date"))
+    )
+
+    _set_widget(page, _MV7_STATE_FIELD.format(nn=nn), state_val)
+    _set_widget(page, _MV7_TITLE_NUMBER_FIELD.format(nn=nn), title_number_val)
+    _set_widget(page, _MV7_OWNER_FIELD.format(nn=nn), owner_val)
+    _set_widget(page, _MV7_DATE_FIELD.format(nn=nn), date_val)
+
+    output_path = _mv7_output_path(record, output_dir)
+    doc.save(output_path)
+    doc.close()
+    return output_path
+
+
+def _set_widget(page: fitz.Page, field_name: str, value: str) -> None:
+    """Set the value of a named AcroForm widget on *page*, if it exists."""
+    for widget in page.widgets():
+        if widget.field_name == field_name:
+            widget.field_value = value
+            widget.update()
+            return

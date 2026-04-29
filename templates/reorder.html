@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reorder Records for CSV Export</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f7fa; }
+  h1 { color: #003366; margin-bottom: 0.25rem; }
+  .subtitle { color: #555; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .toolbar { margin-bottom: 1.25rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .toolbar a { padding: 0.4rem 0.9rem; background: #003366; color: white;
+               text-decoration: none; border-radius: 4px; font-size: 0.9rem; }
+  .toolbar a:hover { background: #00509e; }
+  #sort-list { list-style: none; padding: 0; margin: 0; max-width: 900px; }
+  #sort-list li {
+    display: flex; align-items: center; gap: 0.75rem;
+    background: white; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 0.6rem 0.8rem; margin-bottom: 0.4rem;
+    cursor: grab; user-select: none;
+  }
+  #sort-list li.dragging { opacity: 0.5; border-style: dashed; }
+  #sort-list li.drag-over { border-color: #003366; background: #eef2f7; }
+  .drag-handle { font-size: 1.1rem; color: #aaa; flex-shrink: 0; }
+  .row-num { font-size: 0.75rem; color: #888; width: 2rem; text-align: right; flex-shrink: 0; }
+  .rec-id { font-size: 0.8rem; color: #888; flex-shrink: 0; width: 3.5rem; }
+  .rec-stock { font-size: 0.85rem; color: #555; flex-shrink: 0; width: 7rem;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rec-vin { font-family: monospace; font-size: 0.82rem; flex-shrink: 0; width: 11rem; }
+  .rec-info { font-size: 0.85rem; flex: 1; min-width: 0;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rec-title { font-size: 0.82rem; color: #555; flex-shrink: 0; width: 7rem;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .move-btns { display: flex; gap: 0.25rem; flex-shrink: 0; }
+  .move-btn { padding: 0.2rem 0.45rem; border: 1px solid #ccc; border-radius: 3px;
+              background: white; cursor: pointer; font-size: 0.8rem; }
+  .move-btn:hover { background: #e2e8f0; }
+  .action-bar { max-width: 900px; display: flex; gap: 1rem; align-items: center;
+                margin-top: 1rem; flex-wrap: wrap; }
+  .btn-save { padding: 0.55rem 1.3rem; background: #15803d; color: white;
+              border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9rem; }
+  .btn-save:hover { background: #166534; }
+  #save-status { font-size: 0.85rem; font-weight: bold; }
+  .empty-msg { color: #888; font-size: 0.9rem; padding: 1rem 0; }
+  .legend { font-size: 0.8rem; color: #888; margin-bottom: 0.75rem; }
+  th { text-align: left; font-size: 0.78rem; color: #555;
+       padding: 0 0.8rem 0.4rem 0.8rem; font-weight: 600; }
+  .col-headers { display: flex; gap: 0.75rem; max-width: 900px;
+                 padding: 0 0.8rem; margin-bottom: 0.25rem; }
+  .ch { font-size: 0.75rem; color: #888; font-weight: 600; text-transform: uppercase; }
+  .ch-num  { width: 2rem; flex-shrink: 0; text-align: right; }
+  .ch-id   { width: 3.5rem; flex-shrink: 0; }
+  .ch-stock{ width: 7rem; flex-shrink: 0; }
+  .ch-vin  { width: 11rem; flex-shrink: 0; }
+  .ch-info { flex: 1; min-width: 0; }
+  .ch-title{ width: 7rem; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<h1>🔀 Reorder Records for CSV Export</h1>
+<p class="subtitle">Drag rows to set the order in which validated records appear in the NMVITIS CSV export. Click <strong>Save Order</strong> when done.</p>
+
+<div class="toolbar">
+  <a href="/review">⬅ Back to Review</a>
+  <a href="/export">⬇ Download CSV</a>
+</div>
+
+{% if records %}
+<p class="legend">Drag ⠿ handle or use ▲/▼ buttons. {{ records|length }} validated record(s) shown.</p>
+
+<div class="col-headers">
+  <span class="ch ch-num">#</span>
+  <span style="width:1.5rem;flex-shrink:0;"></span><!-- handle spacer -->
+  <span class="ch ch-id">ID</span>
+  <span class="ch ch-stock">Stock #</span>
+  <span class="ch ch-vin">VIN</span>
+  <span class="ch ch-info">Year / Make / Model</span>
+  <span class="ch ch-title">Title #</span>
+  <span style="width:4.5rem;flex-shrink:0;"></span><!-- buttons spacer -->
+</div>
+
+<ul id="sort-list">
+  {% for rec in records %}
+  <li data-id="{{ rec.id }}" draggable="true">
+    <span class="drag-handle">⠿</span>
+    <span class="row-num">{{ loop.index }}</span>
+    <span class="rec-id">#{{ rec.id }}</span>
+    <span class="rec-stock">{{ rec.stock_number or '—' }}</span>
+    <span class="rec-vin">{{ rec.vin }}</span>
+    <span class="rec-info">{{ rec.vehicle_year }} {{ rec.make or '' }} {{ rec.model or '' }}</span>
+    <span class="rec-title">{{ rec.title_number }}</span>
+    <span class="move-btns">
+      <button class="move-btn" onclick="moveUp(this)" title="Move up">▲</button>
+      <button class="move-btn" onclick="moveDown(this)" title="Move down">▼</button>
+    </span>
+  </li>
+  {% endfor %}
+</ul>
+
+<div class="action-bar">
+  <button class="btn-save" onclick="saveOrder()">💾 Save Order</button>
+  <span id="save-status"></span>
+</div>
+
+{% else %}
+<p class="empty-msg">No validated records found. Records must be validated before they can be reordered.</p>
+{% endif %}
+
+<script>
+const list = document.getElementById('sort-list');
+let dragSrc = null;
+
+if (list) {
+  list.addEventListener('dragstart', e => {
+    dragSrc = e.target.closest('li');
+    dragSrc.classList.add('dragging');
+  });
+
+  list.addEventListener('dragend', e => {
+    e.target.closest('li').classList.remove('dragging');
+    document.querySelectorAll('#sort-list li').forEach(li => li.classList.remove('drag-over'));
+    renumberRows();
+  });
+
+  list.addEventListener('dragover', e => {
+    e.preventDefault();
+    const target = e.target.closest('li');
+    if (target && target !== dragSrc) {
+      document.querySelectorAll('#sort-list li').forEach(li => li.classList.remove('drag-over'));
+      target.classList.add('drag-over');
+    }
+  });
+
+  list.addEventListener('drop', e => {
+    e.preventDefault();
+    const target = e.target.closest('li');
+    if (target && target !== dragSrc) {
+      const allItems = [...list.querySelectorAll('li')];
+      const srcIdx = allItems.indexOf(dragSrc);
+      const tgtIdx = allItems.indexOf(target);
+      if (srcIdx < tgtIdx) {
+        list.insertBefore(dragSrc, target.nextSibling);
+      } else {
+        list.insertBefore(dragSrc, target);
+      }
+      target.classList.remove('drag-over');
+      renumberRows();
+    }
+  });
+}
+
+function renumberRows() {
+  document.querySelectorAll('#sort-list li').forEach((li, i) => {
+    li.querySelector('.row-num').textContent = i + 1;
+  });
+}
+
+function moveUp(btn) {
+  const li = btn.closest('li');
+  const prev = li.previousElementSibling;
+  if (prev) { list.insertBefore(li, prev); renumberRows(); }
+}
+
+function moveDown(btn) {
+  const li = btn.closest('li');
+  const next = li.nextElementSibling;
+  if (next) { list.insertBefore(next, li); renumberRows(); }
+}
+
+function saveOrder() {
+  const items = [...document.querySelectorAll('#sort-list li')];
+  const orders = items.map((li, i) => ({
+    id: parseInt(li.dataset.id, 10),
+    sort_order: i + 1,
+  }));
+  const statusEl = document.getElementById('save-status');
+  statusEl.style.color = '#555';
+  statusEl.textContent = 'Saving…';
+  fetch('/api/records/reorder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(orders),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.saved !== undefined) {
+      statusEl.style.color = '#15803d';
+      statusEl.textContent = `✓ Order saved (${data.saved} records).`;
+    } else {
+      statusEl.style.color = '#dc3545';
+      statusEl.textContent = data.error || 'Error saving order.';
+    }
+  })
+  .catch(() => {
+    statusEl.style.color = '#dc3545';
+    statusEl.textContent = 'Network error.';
+  });
+}
+</script>
+</body>
+</html>

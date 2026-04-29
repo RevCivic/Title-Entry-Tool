@@ -41,6 +41,8 @@
 
 <div class="toolbar">
   <a href="/">⬅ Upload New Title</a>
+  <a href="/records/new">➕ Add Manually</a>
+  <a href="/records/reorder">🔀 Reorder Records</a>
   <a href="/annotate">🔍 Annotation Queue</a>
   <a href="/training">🏭 Training</a>
   <a href="/import-rejections">📥 Import Rejections</a>
@@ -64,7 +66,8 @@
       <th>Year</th>
       <th>Make</th>
       <th>Model</th>
-      <th>Color</th>
+      <th>Stock #</th>
+      <th>Location</th>
       <th>Status</th>
       <th>Created</th>
       <th>Actions</th>
@@ -80,7 +83,8 @@
       <td>{{ rec.vehicle_year }}</td>
       <td>{{ rec.make or '—' }}</td>
       <td>{{ rec.model or '—' }}</td>
-      <td>{{ rec.color or '—' }}</td>
+      <td>{{ rec.stock_number or '—' }}</td>
+      <td>{{ rec.location_status or '—' }}</td>
       <td>
         {% if rec.is_validated %}
           <span class="badge badge-ok">Valid</span>
@@ -95,10 +99,12 @@
         <a href="/titles/{{ rec.id }}/back" style="color:#555;text-decoration:none;font-size:0.85rem;">🔄 Back</a>
         &nbsp;|&nbsp;
         <a href="/api/generate-pdf/{{ rec.id }}" style="color:#b45309;text-decoration:none;font-size:0.85rem;">⬇ PDF</a>
+        &nbsp;|&nbsp;
+        <a href="/api/generate-mv7/{{ rec.id }}" style="color:#6d28d9;text-decoration:none;font-size:0.85rem;">📄 MV-7</a>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="11" style="text-align:center;color:#999;padding:2rem;">No records found.</td></tr>
+    <tr><td colspan="12" style="text-align:center;color:#999;padding:2rem;">No records found.</td></tr>
     {% endfor %}
   </tbody>
 </table>
