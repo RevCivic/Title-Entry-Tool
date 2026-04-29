@@ -84,6 +84,17 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
                 purchase_price NUMERIC(12,2),
                 sale_date TEXT,
                 issue_date TEXT,
+                provider_id TEXT,
+                state_of_plant TEXT,
+                dismantler_license TEXT,
+                plant_name TEXT,
+                description TEXT,
+                condition TEXT,
+                stock_number TEXT,
+                location_status TEXT,
+                purchased_from TEXT,
+                sold_to TEXT,
+                sort_order INTEGER,
                 state_layout_version TEXT,
                 source_file_path TEXT,
                 ocr_text TEXT,
@@ -105,6 +116,17 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             ("purchase_price", "NUMERIC(12,2)"),
             ("sale_date", "TEXT"),
             ("issue_date", "TEXT"),
+            ("provider_id", "TEXT"),
+            ("state_of_plant", "TEXT"),
+            ("dismantler_license", "TEXT"),
+            ("plant_name", "TEXT"),
+            ("description", "TEXT"),
+            ("condition", "TEXT"),
+            ("stock_number", "TEXT"),
+            ("location_status", "TEXT"),
+            ("purchased_from", "TEXT"),
+            ("sold_to", "TEXT"),
+            ("sort_order", "INTEGER"),
             ("state_layout_version", "TEXT"),
             ("source_file_path", "TEXT"),
         ]
@@ -112,7 +134,11 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
         _ALLOWED_EXTENDED_COLUMNS = {
             "make", "model", "body_style", "color", "odometer",
             "owner_name", "owner_address", "purchase_price",
-            "sale_date", "issue_date", "state_layout_version", "source_file_path",
+            "sale_date", "issue_date",
+            "provider_id", "state_of_plant", "dismantler_license", "plant_name",
+            "description", "condition", "stock_number", "location_status",
+            "purchased_from", "sold_to", "sort_order",
+            "state_layout_version", "source_file_path",
         }
         for col_name, col_type in _extended_columns:
             if col_name not in _ALLOWED_EXTENDED_COLUMNS:
@@ -280,6 +306,17 @@ def insert_title_record(
     purchase_price: Optional[float] = None,
     sale_date: Optional[str] = None,
     issue_date: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    state_of_plant: Optional[str] = None,
+    dismantler_license: Optional[str] = None,
+    plant_name: Optional[str] = None,
+    description: Optional[str] = None,
+    condition: Optional[str] = None,
+    stock_number: Optional[str] = None,
+    location_status: Optional[str] = None,
+    purchased_from: Optional[str] = None,
+    sold_to: Optional[str] = None,
+    sort_order: Optional[int] = None,
     state_layout_version: Optional[str] = None,
     source_file_path: Optional[str] = None,
 ) -> Dict[str, object]:
@@ -295,15 +332,21 @@ def insert_title_record(
                 state, title_number, vin, vehicle_year,
                 make, model, body_style, color, odometer,
                 owner_name, owner_address, purchase_price,
-                sale_date, issue_date, state_layout_version,
-                source_file_path, ocr_text,
+                sale_date, issue_date,
+                provider_id, state_of_plant, dismantler_license, plant_name,
+                description, condition, stock_number, location_status,
+                purchased_from, sold_to, sort_order,
+                state_layout_version, source_file_path, ocr_text,
                 is_validated, validation_errors, created_at
             ) VALUES (
                 %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s,
-                %s, %s, %s,
                 %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
                 %s, %s, %s
             )
             RETURNING id
@@ -323,6 +366,17 @@ def insert_title_record(
                 purchase_price,
                 sale_date,
                 issue_date,
+                provider_id,
+                state_of_plant,
+                dismantler_license,
+                plant_name,
+                description,
+                condition,
+                stock_number,
+                location_status,
+                purchased_from,
+                sold_to,
+                sort_order,
                 state_layout_version,
                 source_file_path,
                 ocr_text,
@@ -346,32 +400,22 @@ def export_validated_to_csv(connection: psycopg2.extensions.connection, csv_path
         cursor.execute(
             """
             SELECT
-                state, title_number, vin, vehicle_year,
-                make, model, body_style, color, odometer,
-                owner_name, owner_address, purchase_price,
-                sale_date, issue_date
+                provider_id, vin, title_number, state, state_of_plant,
+                dismantler_license, plant_name, make, model, vehicle_year,
+                odometer, description, condition, stock_number, location_status,
+                purchased_from, created_at, sold_to
             FROM title_records
             WHERE is_validated = 1
-            ORDER BY id ASC
+            ORDER BY COALESCE(sort_order, id) ASC
             """
         )
         rows = cursor.fetchall()
 
     fieldnames = [
-        "state",
-        "title_number",
-        "vin",
-        "vehicle_year",
-        "make",
-        "model",
-        "body_style",
-        "color",
-        "odometer",
-        "owner_name",
-        "owner_address",
-        "purchase_price",
-        "sale_date",
-        "issue_date",
+        "provider_id", "vin", "title_number", "state", "state_of_plant",
+        "dismantler_license", "plant_name", "make", "model", "vehicle_year",
+        "odometer", "description", "condition", "stock_number", "location_status",
+        "purchased_from", "created_at", "sold_to",
     ]
 
     with open(csv_path, "w", newline="", encoding="utf-8") as output_file:
@@ -417,22 +461,22 @@ def export_validated_to_csv_by_date(
 
     where_clause = " AND ".join(conditions)
     fieldnames = [
-        "state", "title_number", "vin", "vehicle_year",
-        "make", "model", "body_style", "color", "odometer",
-        "owner_name", "owner_address", "purchase_price",
-        "sale_date", "issue_date",
+        "provider_id", "vin", "title_number", "state", "state_of_plant",
+        "dismantler_license", "plant_name", "make", "model", "vehicle_year",
+        "odometer", "description", "condition", "stock_number", "location_status",
+        "purchased_from", "created_at", "sold_to",
     ]
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(
             f"""
             SELECT
-                state, title_number, vin, vehicle_year,
-                make, model, body_style, color, odometer,
-                owner_name, owner_address, purchase_price,
-                sale_date, issue_date
+                provider_id, vin, title_number, state, state_of_plant,
+                dismantler_license, plant_name, make, model, vehicle_year,
+                odometer, description, condition, stock_number, location_status,
+                purchased_from, created_at, sold_to
             FROM title_records
             WHERE {where_clause}
-            ORDER BY id ASC
+            ORDER BY COALESCE(sort_order, id) ASC
             """,
             params or None,
         )
@@ -470,12 +514,13 @@ def list_records(
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
-    """Return a page of title records ordered by id DESC."""
+    """Return a page of title records ordered by COALESCE(sort_order, id) DESC."""
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(
             """
             SELECT id, state, title_number, vin, vehicle_year,
-                   make, model, color, is_validated, created_at
+                   make, model, color, is_validated, created_at,
+                   stock_number, location_status, sort_order
             FROM title_records
             ORDER BY id DESC
             LIMIT %s OFFSET %s
@@ -573,6 +618,9 @@ _UPDATABLE_RECORD_FIELDS = frozenset({
     "state", "title_number", "vin", "vehicle_year",
     "make", "model", "body_style", "color", "odometer",
     "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
+    "provider_id", "state_of_plant", "dismantler_license", "plant_name",
+    "description", "condition", "stock_number", "location_status",
+    "purchased_from", "sold_to",
 })
 
 
@@ -623,6 +671,45 @@ def update_title_record_fields(
             )
 
     connection.commit()
+
+
+def update_record_sort_orders(
+    connection: psycopg2.extensions.connection,
+    orders: List[Dict[str, int]],
+) -> None:
+    """Bulk-update ``sort_order`` for a list of records.
+
+    Parameters
+    ----------
+    orders:
+        List of dicts, each containing ``id`` (int) and ``sort_order`` (int).
+    """
+    with connection.cursor() as cursor:
+        for item in orders:
+            record_id = int(item["id"])
+            sort_order = int(item["sort_order"])
+            cursor.execute(
+                "UPDATE title_records SET sort_order = %s WHERE id = %s",
+                (sort_order, record_id),
+            )
+    connection.commit()
+
+
+def list_records_for_reorder(
+    connection: psycopg2.extensions.connection,
+) -> List[Dict[str, Any]]:
+    """Return all validated records in current sort order for the reorder UI."""
+    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+        cursor.execute(
+            """
+            SELECT id, state, title_number, vin, vehicle_year, make, model,
+                   stock_number, sort_order
+            FROM title_records
+            WHERE is_validated = 1
+            ORDER BY COALESCE(sort_order, id) ASC
+            """
+        )
+        return [dict(r) for r in cursor.fetchall()]
 
 
 def get_annotation_queue(
