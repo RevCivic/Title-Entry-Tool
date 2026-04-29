@@ -1167,6 +1167,131 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
         return redirect(url_for("review_record", record_id=record["id"]))
 
+    # ── Bulk record creation ──────────────────────────────────────────────────
+
+    _BULK_MAX_ROWS = 30
+
+    @app.route("/records/bulk-new", methods=["GET"])
+    def bulk_new_records_form():
+        """Render the spreadsheet-style bulk record entry form."""
+        return render_template(
+            "bulk_entry.html",
+            default_state=app.config["DEFAULT_STATE"],
+            max_rows=_BULK_MAX_ROWS,
+        )
+
+    @app.route("/api/records/bulk", methods=["POST"])
+    def create_records_bulk():
+        """Create up to 30 title records from a spreadsheet-style form submission.
+
+        Form field naming convention::
+
+            rows-{n}-{field_name}   (n = 0 … 29)
+
+        Rows where all fields are blank are silently skipped.
+        A JSON response is returned listing saved record IDs and any row-level
+        errors so the caller can show per-row feedback without losing context.
+        """
+        def _str(key: str) -> Optional[str]:
+            v = request.form.get(key, "").strip()
+            return v or None
+
+        def _int(key: str) -> Optional[int]:
+            v = request.form.get(key, "").strip()
+            try:
+                return int(v) if v else None
+            except ValueError:
+                return None
+
+        def _float(key: str) -> Optional[float]:
+            v = request.form.get(key, "").strip()
+            try:
+                return float(v) if v else None
+            except ValueError:
+                return None
+
+        saved_ids: List[int] = []
+        row_errors: List[Dict[str, Any]] = []
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            for n in range(_BULK_MAX_ROWS):
+                prefix = f"rows-{n}-"
+
+                # Collect every field value for this row.
+                row_values = {
+                    f: request.form.get(f"{prefix}{f}", "").strip()
+                    for f in list(_FIELD_NAMES) + list(_OPERATIONAL_FIELDS)
+                }
+
+                # Skip entirely blank rows.
+                if not any(row_values.values()):
+                    continue
+
+                state = (row_values.get("state") or app.config["DEFAULT_STATE"]).upper()
+                title_number = row_values.get("title_number") or ""
+                vin = row_values.get("vin") or ""
+                vehicle_year_raw = row_values.get("vehicle_year", "").strip()
+                try:
+                    vehicle_year = int(vehicle_year_raw) if vehicle_year_raw else MISSING_YEAR_SENTINEL
+                except ValueError:
+                    vehicle_year = MISSING_YEAR_SENTINEL
+
+                odometer_raw = row_values.get("odometer", "").strip()
+                try:
+                    odometer = int(odometer_raw) if odometer_raw else None
+                except ValueError:
+                    odometer = None
+
+                purchase_price_raw = row_values.get("purchase_price", "").strip()
+                try:
+                    purchase_price: Optional[float] = float(purchase_price_raw) if purchase_price_raw else None
+                except ValueError:
+                    purchase_price = None
+
+                try:
+                    record = insert_title_record(
+                        connection=connection,
+                        state=state,
+                        title_number=title_number,
+                        vin=vin,
+                        vehicle_year=vehicle_year,
+                        make=row_values.get("make") or None,
+                        model=row_values.get("model") or None,
+                        body_style=row_values.get("body_style") or None,
+                        color=row_values.get("color") or None,
+                        odometer=odometer,
+                        owner_name=row_values.get("owner_name") or None,
+                        owner_address=row_values.get("owner_address") or None,
+                        purchase_price=purchase_price,
+                        sale_date=row_values.get("sale_date") or None,
+                        issue_date=row_values.get("issue_date") or None,
+                        provider_id=row_values.get("provider_id") or None,
+                        state_of_plant=row_values.get("state_of_plant") or None,
+                        dismantler_license=row_values.get("dismantler_license") or None,
+                        plant_name=row_values.get("plant_name") or None,
+                        description=row_values.get("description") or None,
+                        condition=row_values.get("condition") or None,
+                        stock_number=row_values.get("stock_number") or None,
+                        location_status=row_values.get("location_status") or None,
+                        purchased_from=row_values.get("purchased_from") or None,
+                        sold_to=row_values.get("sold_to") or None,
+                    )
+                    saved_ids.append(int(record["id"]))
+                except Exception as exc:
+                    row_errors.append({"row": n + 1, "error": str(exc)})
+        finally:
+            connection.close()
+
+        return jsonify(
+            {
+                "saved": len(saved_ids),
+                "ids": saved_ids,
+                "errors": row_errors,
+            }
+        )
+
     # ── Record reordering ─────────────────────────────────────────────────────
 
     @app.route("/records/reorder", methods=["GET"])

@@ -1,0 +1,548 @@
+{% extends "base.html" %}
+{% set active_page = 'bulk_entry' %}
+
+{% block title %}Bulk Entry | NMVITIS Title Entry Tool{% endblock %}
+
+{% block head %}
+<style>
+/* ── Bulk-entry spreadsheet ───────────────────────────────────────────────── */
+.bulk-wrap {
+  padding: 1.5rem 1rem 3rem;
+  max-width: 100%;
+}
+
+.bulk-heading {
+  margin-bottom: 1.25rem;
+}
+
+.bulk-heading h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+}
+
+.bulk-hint {
+  color: var(--clr-text-muted);
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+/* Outer scroll container */
+.grid-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--clr-border-strong);
+  border-radius: 6px;
+  background: var(--clr-surface);
+  box-shadow: var(--card-shadow);
+}
+
+/* The actual table */
+.bulk-table {
+  border-collapse: collapse;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  min-width: max-content;
+}
+
+/* Header row */
+.bulk-table thead tr {
+  background: var(--tbl-head-bg);
+  color: var(--tbl-head-text);
+}
+
+.bulk-table thead th {
+  padding: 0.5rem 0.5rem;
+  font-weight: 700;
+  text-align: left;
+  border-right: 1px solid rgba(255,255,255,0.15);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--tbl-head-bg);
+}
+
+.bulk-table thead th.col-row-num {
+  width: 2.5rem;
+  text-align: center;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+}
+
+/* Body rows */
+.bulk-table tbody tr:nth-child(even) {
+  background: var(--tbl-row-even);
+}
+
+.bulk-table tbody tr:hover {
+  background: var(--tbl-row-hover);
+}
+
+/* Row number cell */
+.bulk-table .cell-row-num {
+  text-align: center;
+  color: var(--clr-text-faint);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.4rem;
+  border-right: 1px solid var(--clr-border);
+  position: sticky;
+  left: 0;
+  background: inherit;
+  z-index: 1;
+  min-width: 2.5rem;
+}
+
+/* Data cells */
+.bulk-table td {
+  padding: 0.2rem 0.3rem;
+  border-right: 1px solid var(--clr-border);
+  vertical-align: middle;
+}
+
+/* Inputs inside cells */
+.bulk-table input[type="text"],
+.bulk-table input[type="number"],
+.bulk-table input[type="date"],
+.bulk-table select {
+  width: 100%;
+  min-width: var(--col-w, 90px);
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--input-text);
+  font-size: 0.8rem;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.bulk-table input[type="text"]:focus,
+.bulk-table input[type="number"]:focus,
+.bulk-table input[type="date"]:focus,
+.bulk-table select:focus {
+  outline: 2px solid var(--input-focus-ring);
+  outline-offset: -1px;
+  border-color: var(--input-focus-ring);
+}
+
+/* Required marker */
+.req { color: #c0392b; margin-left: 2px; }
+
+/* Column widths */
+.col-state       { --col-w: 60px;  }
+.col-title-num   { --col-w: 120px; }
+.col-vin         { --col-w: 160px; font-family: monospace; }
+.col-year        { --col-w: 65px;  }
+.col-make        { --col-w: 90px;  }
+.col-model       { --col-w: 90px;  }
+.col-body-style  { --col-w: 80px;  }
+.col-color       { --col-w: 70px;  }
+.col-odometer    { --col-w: 90px;  }
+.col-owner-name  { --col-w: 150px; }
+.col-owner-addr  { --col-w: 200px; }
+.col-price       { --col-w: 90px;  }
+.col-sale-date   { --col-w: 120px; }
+.col-issue-date  { --col-w: 120px; }
+.col-stock       { --col-w: 90px;  }
+.col-condition   { --col-w: 110px; }
+.col-location    { --col-w: 110px; }
+.col-provider    { --col-w: 110px; }
+.col-plant       { --col-w: 130px; }
+.col-dismantler  { --col-w: 120px; }
+.col-plant-state { --col-w: 60px;  }
+.col-purch-from  { --col-w: 130px; }
+.col-sold-to     { --col-w: 130px; }
+
+/* Action bar */
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+/* Progress / result bar */
+#bulk-result {
+  margin-top: 1rem;
+  display: none;
+}
+
+.progress-bar-track {
+  height: 6px;
+  background: var(--clr-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--clr-primary);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bulk-wrap">
+
+  <div class="bulk-heading">
+    <h1>&#9783; Bulk Record Entry</h1>
+    <p class="bulk-hint">
+      Enter up to {{ max_rows }} records directly in the grid below.
+      Blank rows are skipped automatically.
+      Fields marked <span class="req">*</span> are recommended for a valid NMVITIS export.
+    </p>
+  </div>
+
+  <form id="bulk-form" method="POST" action="/api/records/bulk">
+
+    <div class="grid-scroll" role="region" aria-label="Bulk entry spreadsheet" tabindex="0">
+      <table class="bulk-table" id="bulk-table">
+        <thead>
+          <tr>
+            <th class="col-row-num">#</th>
+            <th class="col-state">State<span class="req">*</span></th>
+            <th class="col-title-num">Title #<span class="req">*</span></th>
+            <th class="col-vin">VIN<span class="req">*</span></th>
+            <th class="col-year">Year<span class="req">*</span></th>
+            <th class="col-make">Make</th>
+            <th class="col-model">Model</th>
+            <th class="col-body-style">Body Style</th>
+            <th class="col-color">Color</th>
+            <th class="col-odometer">Odometer</th>
+            <th class="col-owner-name">Owner Name</th>
+            <th class="col-owner-addr">Owner Address</th>
+            <th class="col-price">Purchase Price</th>
+            <th class="col-sale-date">Sale Date</th>
+            <th class="col-issue-date">Issue Date</th>
+            <th class="col-stock">Stock #</th>
+            <th class="col-condition">Condition</th>
+            <th class="col-location">Location</th>
+            <th class="col-provider">Provider ID</th>
+            <th class="col-plant">Plant Name</th>
+            <th class="col-dismantler">Dismantler Lic.</th>
+            <th class="col-plant-state">Plant State</th>
+            <th class="col-purch-from">Purchased From</th>
+            <th class="col-sold-to">Sold To</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in range(max_rows) %}
+          <tr>
+            <td class="cell-row-num">{{ n + 1 }}</td>
+
+            <!-- State -->
+            <td class="col-state">
+              <input type="text" name="rows-{{ n }}-state"
+                     maxlength="2" placeholder="NM"
+                     value="{{ default_state if n == 0 else '' }}"
+                     aria-label="Row {{ n+1 }} State" />
+            </td>
+
+            <!-- Title number -->
+            <td class="col-title-num">
+              <input type="text" name="rows-{{ n }}-title_number"
+                     placeholder="12345678"
+                     aria-label="Row {{ n+1 }} Title number" />
+            </td>
+
+            <!-- VIN -->
+            <td class="col-vin">
+              <input type="text" name="rows-{{ n }}-vin"
+                     maxlength="17" placeholder="17-char VIN"
+                     aria-label="Row {{ n+1 }} VIN" />
+            </td>
+
+            <!-- Year -->
+            <td class="col-year">
+              <input type="number" name="rows-{{ n }}-vehicle_year"
+                     min="1886" max="2100" placeholder="2005"
+                     aria-label="Row {{ n+1 }} Vehicle year" />
+            </td>
+
+            <!-- Make -->
+            <td class="col-make">
+              <input type="text" name="rows-{{ n }}-make"
+                     placeholder="FORD"
+                     aria-label="Row {{ n+1 }} Make" />
+            </td>
+
+            <!-- Model -->
+            <td class="col-model">
+              <input type="text" name="rows-{{ n }}-model"
+                     placeholder="F-150"
+                     aria-label="Row {{ n+1 }} Model" />
+            </td>
+
+            <!-- Body style -->
+            <td class="col-body-style">
+              <input type="text" name="rows-{{ n }}-body_style"
+                     placeholder="PK"
+                     aria-label="Row {{ n+1 }} Body style" />
+            </td>
+
+            <!-- Color -->
+            <td class="col-color">
+              <input type="text" name="rows-{{ n }}-color"
+                     placeholder="RED"
+                     aria-label="Row {{ n+1 }} Color" />
+            </td>
+
+            <!-- Odometer -->
+            <td class="col-odometer">
+              <input type="number" name="rows-{{ n }}-odometer"
+                     min="0" placeholder="125000"
+                     aria-label="Row {{ n+1 }} Odometer" />
+            </td>
+
+            <!-- Owner name -->
+            <td class="col-owner-name">
+              <input type="text" name="rows-{{ n }}-owner_name"
+                     placeholder="Registered owner"
+                     aria-label="Row {{ n+1 }} Owner name" />
+            </td>
+
+            <!-- Owner address -->
+            <td class="col-owner-addr">
+              <input type="text" name="rows-{{ n }}-owner_address"
+                     placeholder="Full address"
+                     aria-label="Row {{ n+1 }} Owner address" />
+            </td>
+
+            <!-- Purchase price -->
+            <td class="col-price">
+              <input type="text" name="rows-{{ n }}-purchase_price"
+                     placeholder="1500.00"
+                     aria-label="Row {{ n+1 }} Purchase price" />
+            </td>
+
+            <!-- Sale date -->
+            <td class="col-sale-date">
+              <input type="date" name="rows-{{ n }}-sale_date"
+                     aria-label="Row {{ n+1 }} Sale date" />
+            </td>
+
+            <!-- Issue date -->
+            <td class="col-issue-date">
+              <input type="date" name="rows-{{ n }}-issue_date"
+                     aria-label="Row {{ n+1 }} Issue date" />
+            </td>
+
+            <!-- Stock number -->
+            <td class="col-stock">
+              <input type="text" name="rows-{{ n }}-stock_number"
+                     placeholder="STK-001"
+                     aria-label="Row {{ n+1 }} Stock number" />
+            </td>
+
+            <!-- Condition -->
+            <td class="col-condition">
+              <select name="rows-{{ n }}-condition"
+                      aria-label="Row {{ n+1 }} Condition">
+                <option value="">—</option>
+                <option>Salvage</option>
+                <option>Parts Only</option>
+                <option>Clean</option>
+                <option>Flood</option>
+                <option>Rebuilt</option>
+              </select>
+            </td>
+
+            <!-- Location / status -->
+            <td class="col-location">
+              <select name="rows-{{ n }}-location_status"
+                      aria-label="Row {{ n+1 }} Location status">
+                <option value="">—</option>
+                <option>In Yard</option>
+                <option>Crushed</option>
+                <option>Sold</option>
+                <option>Dismantled</option>
+                <option>Pending</option>
+              </select>
+            </td>
+
+            <!-- Provider ID -->
+            <td class="col-provider">
+              <input type="text" name="rows-{{ n }}-provider_id"
+                     placeholder="Provider ID"
+                     aria-label="Row {{ n+1 }} Provider ID" />
+            </td>
+
+            <!-- Plant name -->
+            <td class="col-plant">
+              <input type="text" name="rows-{{ n }}-plant_name"
+                     placeholder="Yard name"
+                     aria-label="Row {{ n+1 }} Plant name" />
+            </td>
+
+            <!-- Dismantler license -->
+            <td class="col-dismantler">
+              <input type="text" name="rows-{{ n }}-dismantler_license"
+                     placeholder="License #"
+                     aria-label="Row {{ n+1 }} Dismantler license" />
+            </td>
+
+            <!-- State of plant -->
+            <td class="col-plant-state">
+              <input type="text" name="rows-{{ n }}-state_of_plant"
+                     maxlength="2" placeholder="NM"
+                     aria-label="Row {{ n+1 }} State of plant" />
+            </td>
+
+            <!-- Purchased from -->
+            <td class="col-purch-from">
+              <input type="text" name="rows-{{ n }}-purchased_from"
+                     placeholder="Seller"
+                     aria-label="Row {{ n+1 }} Purchased from" />
+            </td>
+
+            <!-- Sold to -->
+            <td class="col-sold-to">
+              <input type="text" name="rows-{{ n }}-sold_to"
+                     placeholder="Buyer"
+                     aria-label="Row {{ n+1 }} Sold to" />
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div><!-- /.grid-scroll -->
+
+    <div class="bulk-actions">
+      <button type="submit" class="btn btn-primary" id="bulk-submit-btn">
+        &#128190; Save All Records
+      </button>
+      <button type="button" class="btn btn-ghost" id="bulk-clear-btn">
+        &#10005; Clear All
+      </button>
+      <a href="/review" class="btn btn-ghost">Cancel</a>
+    </div>
+
+  </form>
+
+  <!-- Result area -->
+  <div id="bulk-result" role="status" aria-live="polite"></div>
+
+</div><!-- /.bulk-wrap -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+
+  var form       = document.getElementById('bulk-form');
+  var submitBtn  = document.getElementById('bulk-submit-btn');
+  var clearBtn   = document.getElementById('bulk-clear-btn');
+  var resultDiv  = document.getElementById('bulk-result');
+
+  /* ── Tab key navigation between cells ──────────────────────────── */
+  // Default browser tab order works naturally left→right, top→bottom
+  // because inputs are in DOM order.
+
+  /* ── Keyboard shortcut: Enter moves to the cell directly below ─── */
+  document.getElementById('bulk-table').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    var inputs = Array.from(document.getElementById('bulk-table').querySelectorAll(
+      'input, select'
+    ));
+    var idx = inputs.indexOf(document.activeElement);
+    if (idx === -1) return;
+    // Count how many inputs are per row (all non-row-num inputs in first data row).
+    var firstRowInputs = document.querySelector('.bulk-table tbody tr').querySelectorAll(
+      'input, select'
+    ).length;
+    var nextIdx = idx + firstRowInputs;
+    if (nextIdx < inputs.length) {
+      e.preventDefault();
+      inputs[nextIdx].focus();
+    }
+  });
+
+  /* ── Clear all ───────────────────────────────────────────────────── */
+  clearBtn.addEventListener('click', function () {
+    if (!confirm('Clear all entered data?')) return;
+    var inputs = form.querySelectorAll('input[type="text"], input[type="number"], input[type="date"]');
+    inputs.forEach(function (inp) { inp.value = ''; });
+    var selects = form.querySelectorAll('select');
+    selects.forEach(function (sel) { sel.selectedIndex = 0; });
+    resultDiv.style.display = 'none';
+    resultDiv.innerHTML = '';
+  });
+
+  /* ── Submit via fetch (stay on page to show errors) ─────────────── */
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+    resultDiv.style.display = 'none';
+    resultDiv.innerHTML = '';
+
+    var fd = new FormData(form);
+
+    fetch('/api/records/bulk', {
+      method: 'POST',
+      body: fd,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    })
+    .then(function (res) {
+      return res.json().then(function (data) {
+        return { ok: res.ok, data: data };
+      });
+    })
+    .then(function (result) {
+      var data = result.data;
+      var html = '';
+
+      if (data.saved > 0) {
+        html += '<div class="alert alert-ok" style="margin-bottom:0.75rem;">' +
+                '&#10003; <strong>' + data.saved + ' record' + (data.saved !== 1 ? 's' : '') +
+                ' saved successfully.</strong> ' +
+                '<a href="/review" class="btn btn-ghost" style="padding:0.25rem 0.6rem;font-size:0.85rem;">View Records</a>' +
+                '</div>';
+      }
+
+      if (data.errors && data.errors.length > 0) {
+        html += '<div class="alert alert-err"><strong>Errors on ' +
+                data.errors.length + ' row(s):</strong><ul style="margin:0.4rem 0 0;padding-left:1.4rem;">';
+        data.errors.forEach(function (err) {
+          html += '<li>Row ' + err.row + ': ' + _escHtml(err.error) + '</li>';
+        });
+        html += '</ul></div>';
+      }
+
+      if (data.saved === 0 && (!data.errors || data.errors.length === 0)) {
+        html = '<div class="alert alert-warn">&#9888; No data was entered. Fill in at least one row and try again.</div>';
+      }
+
+      resultDiv.innerHTML = html;
+      resultDiv.style.display = 'block';
+      resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    })
+    .catch(function () {
+      resultDiv.innerHTML = '<div class="alert alert-err">&#9888; A network error occurred. Please try again.</div>';
+      resultDiv.style.display = 'block';
+    })
+    .finally(function () {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '&#128190; Save All Records';
+    });
+  });
+
+  function _escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+}());
+</script>
+{% endblock %}
