@@ -25,6 +25,8 @@ from barcode_scanner import scan_barcodes
 from image_preprocessing import binarize_image, preprocess_title_image
 from title_entry_tool import (
     create_connection_from_env,
+    export_validated_to_csv_by_date,
+    find_duplicate_record,
     get_annotation_queue,
     get_app_setting,
     get_corrections_for_record,
@@ -46,7 +48,6 @@ from title_entry_tool import (
     update_record_sort_orders,
     update_title_record_fields,
     upsert_model_definition,
-    export_validated_to_csv_by_date,
 )
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}
@@ -91,6 +92,46 @@ _AI_STATUS_TTL = 30.0  # seconds between live probes
 # Active-model cache – avoids a DB round-trip on every extraction request.
 _ACTIVE_MODEL_CACHE: Dict[str, object] = {"model": None, "checked_at": 0.0}
 _ACTIVE_MODEL_TTL = 5.0  # seconds
+
+# ── CSV import: canonical header-alias table ──────────────────────────────────
+# Maps each DB field name to the set of lower-cased, stripped header strings
+# that should be auto-detected as that field.
+_CSV_HEADER_ALIASES: Dict[str, frozenset] = {
+    "state":             frozenset({"state", "st"}),
+    "title_number":      frozenset({"title number", "title #", "title no", "title_number", "titlenumber", "title"}),
+    "vin":               frozenset({"vin", "vehicle identification number", "vin number"}),
+    "vehicle_year":      frozenset({"year", "yr", "vehicle year", "vehicle_year", "model year", "veh year"}),
+    "make":              frozenset({"make", "vehicle make", "mfr", "manufacturer"}),
+    "model":             frozenset({"model", "vehicle model", "model name"}),
+    "body_style":        frozenset({"body style", "body", "body_style", "style", "body type"}),
+    "color":             frozenset({"color", "colour", "vehicle color", "primary color"}),
+    "odometer":          frozenset({"odometer", "mileage", "miles", "odometer reading", "odo"}),
+    "owner_name":        frozenset({"owner name", "owner", "owner_name", "registered owner", "title holder"}),
+    "owner_address":     frozenset({"owner address", "address", "owner_address", "registered address"}),
+    "purchase_price":    frozenset({"purchase price", "price", "purchase_price", "amount", "sale amount", "purchase amount"}),
+    "sale_date":         frozenset({"sale date", "sale_date", "date of sale", "sold date", "date sold"}),
+    "issue_date":        frozenset({"issue date", "issue_date", "date issued", "title date", "date of title"}),
+    "provider_id":       frozenset({"provider id", "provider", "provider_id", "provider number"}),
+    "state_of_plant":    frozenset({"state of plant", "plant state", "state_of_plant", "facility state"}),
+    "dismantler_license": frozenset({"dismantler license", "dismantler", "dismantler lic", "license number", "dismantler_license", "dismantler license #"}),
+    "plant_name":        frozenset({"plant name", "plant", "plant_name", "facility name", "yard name", "yard"}),
+    "description":       frozenset({"description", "desc", "vehicle description"}),
+    "condition":         frozenset({"condition", "vehicle condition", "title condition"}),
+    "stock_number":      frozenset({"stock number", "stock #", "stock", "stock_number", "stk", "stk #", "stock no"}),
+    "location_status":   frozenset({"location status", "location", "location_status", "status"}),
+    "purchased_from":    frozenset({"purchased from", "purchased_from", "bought from", "seller", "purchase from"}),
+    "sold_to":           frozenset({"sold to", "sold_to", "buyer", "buyer name"}),
+}
+
+# Reverse lookup: normalised_alias → db_field_name.
+_CSV_HEADER_REVERSE: Dict[str, str] = {
+    alias: field
+    for field, aliases in _CSV_HEADER_ALIASES.items()
+    for alias in aliases
+}
+
+# All importable field names (ordered as they appear in the mapping UI).
+_CSV_ALL_FIELDS: Tuple[str, ...] = _FIELD_NAMES + _OPERATIONAL_FIELDS
 
 # ── Docker / maintenance ──────────────────────────────────────────────────────
 
@@ -664,6 +705,20 @@ def _save_upload(file_bytes: bytes, _original_filename: str) -> Optional[str]:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _normalize_csv_header(header: str) -> str:
+    """Lower-case, strip, and remove non-alphanumeric/space chars from a CSV header."""
+    return re.sub(r"[^a-z0-9 ]", "", header.lower().strip()).strip()
+
+
+def _auto_map_csv_headers(headers: List[str]) -> Dict[str, Optional[str]]:
+    """Return ``{original_header: db_field_name_or_None}`` for each header.
+
+    Auto-detection uses :data:`_CSV_HEADER_REVERSE`.  Headers that do not match
+    any alias map to ``None`` so the UI can offer a manual selector.
+    """
+    return {h: _CSV_HEADER_REVERSE.get(_normalize_csv_header(h)) for h in headers}
 
 
 def _run_extraction(
@@ -1503,6 +1558,240 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
             mimetype="application/pdf",
             as_attachment=True,
             download_name=os.path.basename(pdf_path),
+        )
+
+    # ── CSV bulk import endpoint ──────────────────────────────────────────────
+
+    @app.route("/import-csv", methods=["GET", "POST"])
+    def import_csv_upload():
+        """Two-step CSV import: step 1 = upload + preview; step 2 = confirm mapping."""
+        if request.method == "GET":
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        # ── Step 1: parse the uploaded file, store temporarily, show mapping UI ──
+        upload = request.files.get("file")
+        if not upload or not upload.filename:
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="No file provided.",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        file_bytes = upload.read(MAX_UPLOAD_BYTES + 1)
+        if len(file_bytes) > MAX_UPLOAD_BYTES:
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="File is too large (max 16 MB).",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        # Decode: try UTF-8-BOM first (common Google Sheets export), fall back to Latin-1.
+        try:
+            text = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = file_bytes.decode("latin-1")
+
+        import csv as _csv_mod
+
+        reader = _csv_mod.DictReader(io.StringIO(text))
+        headers = list(reader.fieldnames or [])
+        if not headers:
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="The CSV file has no column headers.",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        # Collect the first 5 data rows for the preview table.
+        preview_rows: List[Dict[str, str]] = []
+        for row in reader:
+            if len(preview_rows) >= 5:
+                break
+            preview_rows.append({h: (row.get(h) or "") for h in headers})
+
+        header_map = _auto_map_csv_headers(headers)
+
+        # Persist the raw bytes to UPLOADS_DIR so the confirm step can re-read them.
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        tmp_name = f"{uuid.uuid4().hex}.csv"
+        tmp_path = os.path.join(UPLOADS_DIR, tmp_name)
+        try:
+            with open(tmp_path, "wb") as fh:
+                fh.write(file_bytes)
+        except OSError as exc:
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error=f"Could not store the uploaded file: {exc}",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        return render_template(
+            "import_csv.html",
+            step="preview",
+            tmp_name=tmp_name,
+            headers=headers,
+            header_map=header_map,
+            preview_rows=preview_rows,
+            all_fields=_CSV_ALL_FIELDS,
+        )
+
+    @app.route("/import-csv/confirm", methods=["POST"])
+    def import_csv_confirm():
+        """Step 2: apply the user-confirmed column mapping and insert all rows."""
+        tmp_name = request.form.get("tmp_name", "").strip()
+
+        # Validate filename to prevent path traversal (must be hex32.csv).
+        if not re.fullmatch(r"[0-9a-f]{32}\.csv", tmp_name):
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="Invalid session token. Please re-upload your file.",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        uploads_real = os.path.realpath(UPLOADS_DIR)
+        tmp_path = os.path.realpath(os.path.join(UPLOADS_DIR, tmp_name))
+        if not tmp_path.startswith(uploads_real + os.sep):
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="Invalid session token.",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        if not os.path.exists(tmp_path):
+            return render_template(
+                "import_csv.html",
+                step="upload",
+                error="Upload session expired. Please re-upload your file.",
+                all_fields=_CSV_ALL_FIELDS,
+            )
+
+        # Decode stored file.
+        with open(tmp_path, "rb") as fh:
+            raw = fh.read()
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode("latin-1")
+
+        import csv as _csv_mod
+
+        reader = _csv_mod.DictReader(io.StringIO(text))
+        headers = list(reader.fieldnames or [])
+
+        # Build mapping from form data: col_<index> = db_field_name_or_empty.
+        col_mapping: Dict[str, Optional[str]] = {}
+        allowed_fields = set(_CSV_ALL_FIELDS)
+        for idx, header in enumerate(headers):
+            raw_field = request.form.get(f"col_{idx}", "").strip()
+            col_mapping[header] = raw_field if raw_field in allowed_fields else None
+
+        default_state = app.config["DEFAULT_STATE"]
+
+        total = 0
+        saved = 0
+        skipped = 0
+        row_errors: List[Dict[str, Any]] = []
+
+        connection = create_connection_from_env()
+        try:
+            initialize_database(connection)
+            for row_num, row in enumerate(reader, start=2):  # row 1 = header
+                # Map CSV row to db field values.
+                values: Dict[str, Optional[str]] = {}
+                for header, field in col_mapping.items():
+                    if field:
+                        values[field] = (row.get(header) or "").strip() or None
+
+                # Skip rows where every field is blank.
+                if not any(values.values()):
+                    continue
+                total += 1
+
+                try:
+                    state = (values.get("state") or default_state).upper()
+                    title_number = values.get("title_number") or ""
+                    vin = (values.get("vin") or "").strip().upper()
+
+                    year_raw = (values.get("vehicle_year") or "").strip()
+                    try:
+                        vehicle_year = int(year_raw) if year_raw else MISSING_YEAR_SENTINEL
+                    except ValueError:
+                        vehicle_year = MISSING_YEAR_SENTINEL
+
+                    odo_raw = (values.get("odometer") or "").strip()
+                    try:
+                        odometer: Optional[int] = int(odo_raw) if odo_raw else None
+                    except ValueError:
+                        odometer = None
+
+                    price_raw = (values.get("purchase_price") or "").strip()
+                    try:
+                        purchase_price: Optional[float] = float(price_raw) if price_raw else None
+                    except ValueError:
+                        purchase_price = None
+
+                    # Duplicate check (state + title_number + vin).
+                    if title_number and vin and find_duplicate_record(
+                        connection, state, title_number, vin
+                    ):
+                        skipped += 1
+                        continue
+
+                    insert_title_record(
+                        connection=connection,
+                        state=state,
+                        title_number=title_number,
+                        vin=vin,
+                        vehicle_year=vehicle_year,
+                        make=values.get("make"),
+                        model=values.get("model"),
+                        body_style=values.get("body_style"),
+                        color=values.get("color"),
+                        odometer=odometer,
+                        owner_name=values.get("owner_name"),
+                        owner_address=values.get("owner_address"),
+                        purchase_price=purchase_price,
+                        sale_date=values.get("sale_date"),
+                        issue_date=values.get("issue_date"),
+                        provider_id=values.get("provider_id"),
+                        state_of_plant=values.get("state_of_plant"),
+                        dismantler_license=values.get("dismantler_license"),
+                        plant_name=values.get("plant_name"),
+                        description=values.get("description"),
+                        condition=values.get("condition"),
+                        stock_number=values.get("stock_number"),
+                        location_status=values.get("location_status"),
+                        purchased_from=values.get("purchased_from"),
+                        sold_to=values.get("sold_to"),
+                    )
+                    saved += 1
+                except Exception as exc:
+                    row_errors.append({"row": row_num, "error": str(exc)})
+        finally:
+            connection.close()
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+        return render_template(
+            "import_csv.html",
+            step="results",
+            total=total,
+            saved=saved,
+            skipped=skipped,
+            errors=row_errors,
+            all_fields=_CSV_ALL_FIELDS,
         )
 
     # ── NMVITIS rejection import endpoint ────────────────────────────────────

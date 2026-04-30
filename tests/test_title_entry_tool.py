@@ -7,6 +7,7 @@ from unittest import mock
 
 from title_entry_tool import (
     export_validated_to_csv,
+    find_duplicate_record,
     get_annotation_queue,
     get_app_setting,
     get_record_by_id,
@@ -496,6 +497,27 @@ class MV7PdfTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(path))
             self.assertIn("mv7_999", os.path.basename(path))
             self.assertGreater(os.path.getsize(path), 0)
+
+
+class FindDuplicateRecordTests(unittest.TestCase):
+    """Tests for find_duplicate_record."""
+
+    def test_returns_id_when_match_found(self) -> None:
+        connection, _ = _make_connection(fetchone_return=(7,))
+        result = find_duplicate_record(connection, "NM", "12345678", "1HGCM82633A004352")
+        self.assertEqual(7, result)
+
+    def test_returns_none_when_no_match(self) -> None:
+        connection, _ = _make_connection(fetchone_explicit_none=True)
+        result = find_duplicate_record(connection, "NM", "12345678", "1HGCM82633A004352")
+        self.assertIsNone(result)
+
+    def test_normalises_state_and_vin_to_uppercase(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(3,))
+        find_duplicate_record(connection, "nm", "abc123", "1hgcm82633a004352")
+        args = cursor.execute.call_args[0][1]
+        self.assertEqual("NM", args[0])
+        self.assertEqual("1HGCM82633A004352", args[2])
 
 
 if __name__ == "__main__":

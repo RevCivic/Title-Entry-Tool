@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% set active_page = 'records' %}
+
+{% block title %}Import CSV | NMVITIS Title Entry Tool{% endblock %}
+
+{% block head %}
+<style>
+.csv-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+/* ── preview table ── */
+.map-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-bottom: 1.5rem;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.map-table thead tr {
+  background: var(--tbl-head-bg);
+  color: var(--tbl-head-text);
+}
+.map-table th, .map-table td {
+  padding: 0.45rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--tbl-border);
+  vertical-align: middle;
+}
+.map-table tbody tr:nth-child(even) { background: var(--tbl-row-even); }
+.map-table tbody tr:hover           { background: var(--tbl-row-hover); }
+.map-table select {
+  width: 100%;
+  font-size: 0.83rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  border-radius: 4px;
+}
+.map-table select.mapped   { border-color: var(--badge-ok-text); }
+.map-table select.unmapped { border-color: var(--badge-err-text); }
+.preview-scroll { overflow-x: auto; }
+.preview-table {
+  font-size: 0.78rem;
+  white-space: nowrap;
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.preview-table th, .preview-table td {
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid var(--tbl-border);
+}
+.preview-table thead tr { background: var(--tbl-head-bg); color: var(--tbl-head-text); }
+.preview-table tbody tr:nth-child(even) { background: var(--tbl-row-even); }
+.result-summary { font-size: 1rem; line-height: 1.8; }
+.result-summary .num { font-weight: 700; font-size: 1.15rem; }
+.err-list { max-height: 300px; overflow-y: auto; font-size: 0.82rem; }
+.err-list li { margin-bottom: 0.25rem; }
+.section-label {
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--clr-text-muted);
+  margin: 1.5rem 0 0.5rem;
+}
+.required-badge {
+  display: inline-block;
+  background: var(--badge-err-bg);
+  color: var(--badge-err-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="csv-wrap">
+
+  <div class="page-heading">
+    <h1>&#128203; Import Records from CSV</h1>
+    <p class="page-hint">
+      Upload a CSV file (e.g. exported from Google Sheets) to import title records in bulk.
+      Supports any number of rows — far beyond the 30-row manual entry limit.
+    </p>
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  {% if step == 'results' %}
+  <!-- STEP 3: Results ───────────────────────────────────────────── -->
+
+  <div class="card" style="max-width:680px;">
+    <h2>&#10003; Import Complete</h2>
+
+    <div class="result-summary">
+      <div>Rows read: <span class="num">{{ total }}</span></div>
+      <div style="color:var(--badge-ok-text);">Imported:   <span class="num">{{ saved }}</span></div>
+      {% if skipped > 0 %}
+      <div style="color:var(--badge-warn-text);">Skipped (duplicates): <span class="num">{{ skipped }}</span></div>
+      {% endif %}
+      {% if errors %}
+      <div style="color:var(--badge-err-text);">Errors: <span class="num">{{ errors|length }}</span></div>
+      {% endif %}
+    </div>
+
+    {% if errors %}
+    <div class="section-label">Row errors</div>
+    <ul class="err-list">
+      {% for e in errors %}
+      <li><strong>Row {{ e.row }}:</strong> {{ e.error }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <div class="btn-row" style="margin-top:1.25rem;">
+      <a href="/review" class="btn btn-primary">&#128203; View Records</a>
+      <a href="/import-csv" class="btn btn-ghost">&#8617; Import Another File</a>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  {% elif step == 'preview' %}
+  <!-- STEP 2: Column mapping + preview ─────────────────────────── -->
+
+  <div class="info-banner" role="note">
+    Review how each CSV column maps to a database field, then click
+    <strong>Import Records</strong> to commit.  Columns set to
+    <em>— ignore —</em> will not be imported.
+  </div>
+
+  <form method="POST" action="/import-csv/confirm">
+    <input type="hidden" name="tmp_name" value="{{ tmp_name }}" />
+
+    <div class="section-label">Column mapping</div>
+    <p style="font-size:0.85rem;color:var(--clr-text-muted);margin-top:0;">
+      Fields marked <span class="required-badge">required</span> must be mapped for records to save correctly.
+    </p>
+
+    <table class="map-table">
+      <thead>
+        <tr>
+          <th style="width:35%;">CSV column header</th>
+          <th style="width:45%;">Maps to database field</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for header in headers %}
+        {% set mapped = header_map.get(header) %}
+        <tr>
+          <td><code>{{ header }}</code></td>
+          <td>
+            <select name="col_{{ loop.index0 }}"
+                    class="{% if mapped %}mapped{% else %}unmapped{% endif %}"
+                    aria-label="Mapping for {{ header }}">
+              <option value="">— ignore —</option>
+              {% for field in all_fields %}
+              <option value="{{ field }}"
+                      {% if field == mapped %}selected{% endif %}>
+                {{ field }}
+                {% if field in ('state', 'title_number', 'vin', 'vehicle_year') %} *{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            {% if mapped %}
+            <span class="badge badge-ok">Auto-detected</span>
+            {% else %}
+            <span class="badge badge-warn">Not recognised</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-label">Data preview (first {{ preview_rows|length }} rows)</div>
+    <div class="preview-scroll">
+      <table class="preview-table">
+        <thead>
+          <tr>
+            {% for header in headers %}
+            <th>{{ header }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview_rows %}
+          <tr>
+            {% for header in headers %}
+            <td>{{ row.get(header) or '' }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div><!-- /.preview-scroll -->
+
+    <div class="btn-row" style="margin-top:1.5rem;">
+      <button type="submit" class="btn btn-primary">
+        &#128190; Import Records
+      </button>
+      <a href="/import-csv" class="btn btn-ghost">&#8592; Re-upload</a>
+      <a href="/review" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  {% else %}
+  <!-- STEP 1: Upload form ─────────────────────────────────────── -->
+
+  <div class="card" style="max-width:640px;">
+    <h2>&#128196; Upload CSV File</h2>
+
+    <div class="step-guide">
+      <ol>
+        <li><strong>Step 1:</strong> Open your Google Sheet, then choose
+          <em>File → Download → Comma Separated Values (.csv)</em>.</li>
+        <li><strong>Step 2:</strong> Select that file below and click
+          <em>Next: Preview &amp; Map Columns</em>.</li>
+        <li><strong>Step 3:</strong> Verify the column mapping, then click
+          <em>Import Records</em>.</li>
+      </ol>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-err" role="alert" style="margin-bottom:0.75rem;">
+      &#9888; {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/import-csv" enctype="multipart/form-data">
+      <div class="form-field">
+        <label for="csv-file">
+          Select CSV File <span style="color:#c0392b;">*</span>
+        </label>
+        <input type="file" id="csv-file" name="file" accept=".csv" required />
+        <p class="field-hint">
+          Must be a <code>.csv</code> file. UTF-8 and Latin-1 encodings are supported.
+          Maximum file size: 16 MB.
+        </p>
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">
+          &#8594; Next: Preview &amp; Map Columns
+        </button>
+        <a href="/review" class="btn btn-ghost">&#8592; Back to Records</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="max-width:640px;margin-top:1rem;">
+    <h3 style="margin-top:0;">Supported column headers</h3>
+    <p style="font-size:0.85rem;color:var(--clr-text-muted);margin-bottom:0.75rem;">
+      The following database fields can be populated from your CSV.
+      Common name variations are auto-detected.
+    </p>
+    <table style="font-size:0.82rem;border-collapse:collapse;width:100%;">
+      <thead>
+        <tr>
+          <th style="padding:0.3rem 0.5rem;background:var(--tbl-head-bg);color:var(--tbl-head-text);text-align:left;">Database field</th>
+          <th style="padding:0.3rem 0.5rem;background:var(--tbl-head-bg);color:var(--tbl-head-text);text-align:left;">Auto-detected column names</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set aliases_table = [
+          ('state',             'state, st'),
+          ('title_number',      'title number, title #, title no, title'),
+          ('vin',               'vin, vehicle identification number'),
+          ('vehicle_year',      'year, yr, vehicle year, model year'),
+          ('make',              'make, vehicle make, mfr'),
+          ('model',             'model, vehicle model'),
+          ('body_style',        'body style, body, style'),
+          ('color',             'color, colour, vehicle color'),
+          ('odometer',          'odometer, mileage, miles, odo'),
+          ('owner_name',        'owner name, owner, registered owner'),
+          ('owner_address',     'owner address, address'),
+          ('purchase_price',    'purchase price, price, amount'),
+          ('sale_date',         'sale date, date of sale, sold date'),
+          ('issue_date',        'issue date, date issued, title date'),
+          ('provider_id',       'provider id, provider'),
+          ('state_of_plant',    'state of plant, plant state'),
+          ('dismantler_license','dismantler license, dismantler, dismantler lic'),
+          ('plant_name',        'plant name, plant, yard, yard name'),
+          ('description',       'description, desc'),
+          ('condition',         'condition, vehicle condition'),
+          ('stock_number',      'stock number, stock #, stk, stock no'),
+          ('location_status',   'location status, location, status'),
+          ('purchased_from',    'purchased from, bought from, seller'),
+          ('sold_to',           'sold to, buyer'),
+        ] %}
+        {% for field, examples in aliases_table %}
+        <tr style="border-bottom:1px solid var(--tbl-border);">
+          <td style="padding:0.3rem 0.5rem;font-family:monospace;">
+            {{ field }}
+            {% if field in ('state', 'title_number', 'vin', 'vehicle_year') %}
+            <span class="required-badge">required</span>
+            {% endif %}
+          </td>
+          <td style="padding:0.3rem 0.5rem;color:var(--clr-text-muted);">{{ examples }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% endif %}
+
+</div><!-- /.csv-wrap -->
+{% endblock %}

@@ -1752,5 +1752,172 @@ class ModelEndpointTests(unittest.TestCase):
         self.assertEqual(400, response.status_code)
 
 
+class CsvImportHelperTests(unittest.TestCase):
+    """Unit tests for _normalize_csv_header and _auto_map_csv_headers."""
+
+    def test_normalize_csv_header_lowercases_and_strips(self) -> None:
+        from web_app import _normalize_csv_header
+        self.assertEqual("title number", _normalize_csv_header("  Title Number  "))
+
+    def test_normalize_csv_header_removes_special_chars(self) -> None:
+        from web_app import _normalize_csv_header
+        self.assertEqual("title", _normalize_csv_header("Title #"))
+        self.assertEqual("vin", _normalize_csv_header("VIN!"))
+
+    def test_auto_map_csv_headers_detects_exact_aliases(self) -> None:
+        from web_app import _auto_map_csv_headers
+        mapping = _auto_map_csv_headers(["State", "Title Number", "VIN", "Year"])
+        self.assertEqual("state", mapping["State"])
+        self.assertEqual("title_number", mapping["Title Number"])
+        self.assertEqual("vin", mapping["VIN"])
+        self.assertEqual("vehicle_year", mapping["Year"])
+
+    def test_auto_map_csv_headers_detects_hash_alias(self) -> None:
+        from web_app import _auto_map_csv_headers
+        # "Title #" normalises to "title" which is an alias for title_number
+        mapping = _auto_map_csv_headers(["Title #"])
+        self.assertEqual("title_number", mapping["Title #"])
+
+    def test_auto_map_csv_headers_returns_none_for_unknown(self) -> None:
+        from web_app import _auto_map_csv_headers
+        mapping = _auto_map_csv_headers(["Foobar", "unknown_col"])
+        self.assertIsNone(mapping["Foobar"])
+        self.assertIsNone(mapping["unknown_col"])
+
+    def test_auto_map_csv_headers_detects_operational_fields(self) -> None:
+        from web_app import _auto_map_csv_headers
+        mapping = _auto_map_csv_headers(["stock #", "yard name", "dismantler lic", "sold to"])
+        self.assertEqual("stock_number", mapping["stock #"])
+        self.assertEqual("plant_name", mapping["yard name"])
+        self.assertEqual("dismantler_license", mapping["dismantler lic"])
+        self.assertEqual("sold_to", mapping["sold to"])
+
+
+class CsvImportRouteTests(unittest.TestCase):
+    """Tests for GET/POST /import-csv and POST /import-csv/confirm."""
+
+    def _app(self):
+        app = create_app()
+        app.testing = True
+        return app
+
+    def test_get_import_csv_returns_upload_form(self) -> None:
+        client = self._app().test_client()
+        response = client.get("/import-csv")
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Import Records from CSV", response.data)
+        self.assertIn(b"Upload CSV File", response.data)
+
+    def test_post_import_csv_no_file_shows_error(self) -> None:
+        client = self._app().test_client()
+        response = client.post("/import-csv", data={}, content_type="multipart/form-data")
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"No file provided", response.data)
+
+    def test_post_import_csv_shows_preview_with_valid_csv(self) -> None:
+        import tempfile
+        csv_content = b"State,Title Number,VIN,Year\nNM,12345678,1HGCM82633A004352,2005\n"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("web_app.UPLOADS_DIR", tmpdir):
+                client = self._app().test_client()
+                response = client.post(
+                    "/import-csv",
+                    data={"file": (BytesIO(csv_content), "records.csv")},
+                    content_type="multipart/form-data",
+                )
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Column mapping", response.data)
+        self.assertIn(b"Auto-detected", response.data)
+
+    def test_post_import_csv_confirm_rejects_invalid_token(self) -> None:
+        client = self._app().test_client()
+        response = client.post(
+            "/import-csv/confirm",
+            data={"tmp_name": "../../etc/passwd"},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Invalid session token", response.data)
+
+    @mock.patch("web_app.find_duplicate_record", return_value=None)
+    @mock.patch("web_app.insert_title_record")
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_post_import_csv_confirm_inserts_rows(
+        self,
+        conn_mock: mock.Mock,
+        init_mock: mock.Mock,
+        insert_mock: mock.Mock,
+        dup_mock: mock.Mock,
+    ) -> None:
+        import tempfile, os as _os
+        conn_mock.return_value = mock.MagicMock()
+        insert_mock.return_value = {"id": 1, "is_validated": True, "validation_errors": []}
+
+        csv_content = b"State,Title Number,VIN,Year\nNM,12345678,1HGCM82633A004352,2005\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_name = "aabbccddeeff00112233445566778899.csv"
+            tmp_path = _os.path.join(tmpdir, tmp_name)
+            with open(tmp_path, "wb") as fh:
+                fh.write(csv_content)
+
+            with mock.patch("web_app.UPLOADS_DIR", tmpdir):
+                client = self._app().test_client()
+                response = client.post(
+                    "/import-csv/confirm",
+                    data={
+                        "tmp_name": tmp_name,
+                        "col_0": "state",
+                        "col_1": "title_number",
+                        "col_2": "vin",
+                        "col_3": "vehicle_year",
+                    },
+                    content_type="multipart/form-data",
+                )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Import Complete", response.data)
+        insert_mock.assert_called_once()
+
+    @mock.patch("web_app.find_duplicate_record", return_value=42)
+    @mock.patch("web_app.initialize_database")
+    @mock.patch("web_app.create_connection_from_env")
+    def test_post_import_csv_confirm_skips_duplicates(
+        self,
+        conn_mock: mock.Mock,
+        init_mock: mock.Mock,
+        dup_mock: mock.Mock,
+    ) -> None:
+        import tempfile, os as _os
+        conn_mock.return_value = mock.MagicMock()
+
+        csv_content = b"State,Title Number,VIN,Year\nNM,12345678,1HGCM82633A004352,2005\n"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_name = "aabbccddeeff00112233445566778899.csv"
+            tmp_path = _os.path.join(tmpdir, tmp_name)
+            with open(tmp_path, "wb") as fh:
+                fh.write(csv_content)
+
+            with mock.patch("web_app.UPLOADS_DIR", tmpdir):
+                client = self._app().test_client()
+                response = client.post(
+                    "/import-csv/confirm",
+                    data={
+                        "tmp_name": tmp_name,
+                        "col_0": "state",
+                        "col_1": "title_number",
+                        "col_2": "vin",
+                        "col_3": "vehicle_year",
+                    },
+                    content_type="multipart/form-data",
+                )
+
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"Import Complete", response.data)
+        self.assertIn(b"Skipped", response.data)
+
+
 if __name__ == "__main__":
     unittest.main()
