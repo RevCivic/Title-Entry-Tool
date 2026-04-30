@@ -37,23 +37,9 @@ _MV7_BLANK = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "BLANK-MV7-FORM.pdf"
 )
 
-# NMVITIS field display labels in submission order.
-_FIELD_LABELS: Dict[str, str] = {
-    "state": "Title State",
-    "title_number": "Title Number",
-    "vin": "Vehicle Identification Number (VIN)",
-    "vehicle_year": "Vehicle Year",
-    "make": "Make",
-    "model": "Model",
-    "body_style": "Body Style",
-    "color": "Color",
-    "odometer": "Odometer Reading",
-    "owner_name": "Owner Name",
-    "owner_address": "Owner Address",
-    "purchase_price": "Purchase Price ($)",
-    "sale_date": "Date of Sale",
-    "issue_date": "Title Issue Date",
-}
+# NMVITIS field display labels in submission order – imported from the canonical
+# model definition so adding a field only requires one change.
+from app.models.title_record import FIELD_LABELS as _FIELD_LABELS
 
 # ---------------------------------------------------------------------------
 # Helpers
