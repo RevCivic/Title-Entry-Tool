@@ -72,6 +72,12 @@
           </a>
         </li>
         <li>
+          <a href="/import-csv"
+             {% if active_page == 'import_csv' %}class="active" aria-current="page"{% endif %}>
+            &#128229; Import CSV
+          </a>
+        </li>
+        <li>
           <a href="/annotate"
              {% if active_page == 'annotate' %}class="active" aria-current="page"{% endif %}>
             &#128270; Annotate

@@ -894,6 +894,39 @@ def import_nmvitis_rejections(
 
 
 # ---------------------------------------------------------------------------
+# CSV bulk import helpers
+# ---------------------------------------------------------------------------
+
+
+def find_duplicate_record(
+    connection: psycopg2.extensions.connection,
+    state: str,
+    title_number: str,
+    vin: str,
+) -> Optional[int]:
+    """Return the ``id`` of an existing record matching *state* + *title_number* + *vin*.
+
+    Returns ``None`` when no duplicate exists.  The comparison is
+    case-insensitive (all values are upper-cased before querying).
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id FROM title_records
+            WHERE state = %s AND title_number = %s AND vin = %s
+            LIMIT 1
+            """,
+            (
+                state.strip().upper(),
+                title_number.strip().upper(),
+                vin.strip().upper(),
+            ),
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row else None
+
+
+# ---------------------------------------------------------------------------
 # Back-of-title records
 # ---------------------------------------------------------------------------
 
