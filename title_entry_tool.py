@@ -10,34 +10,18 @@ import psycopg2.extensions
 import psycopg2.extras
 import psycopg2.sql
 
-VIN_ALLOWED = set("0123456789ABCDEFGHJKLMNPRSTUVWXYZ")
-VIN_TRANSLITERATION = {
-    **{str(i): i for i in range(10)},
-    "A": 1,
-    "B": 2,
-    "C": 3,
-    "D": 4,
-    "E": 5,
-    "F": 6,
-    "G": 7,
-    "H": 8,
-    "J": 1,
-    "K": 2,
-    "L": 3,
-    "M": 4,
-    "N": 5,
-    "P": 7,
-    "R": 9,
-    "S": 2,
-    "T": 3,
-    "U": 4,
-    "V": 5,
-    "W": 6,
-    "X": 7,
-    "Y": 8,
-    "Z": 9,
-}
-VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+# VIN validation constants and all field-level validators are the single source
+# of truth in the TitleRecord model; import them here for backward compatibility.
+from app.models.title_record import (
+    VIN_ALLOWED,
+    VIN_TRANSLITERATION,
+    VIN_WEIGHTS,
+    _normalize_title_number,
+    validate_title_number,
+    validate_vin,
+    validate_vehicle_year,
+    validate_record,
+)
 
 
 def create_connection_from_env() -> psycopg2.extensions.connection:
@@ -228,65 +212,6 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             """
         )
     connection.commit()
-
-
-def _normalize_title_number(title_number: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", title_number.upper())
-
-
-def validate_title_number(title_number: str) -> Optional[str]:
-    normalized = _normalize_title_number(title_number)
-    if len(normalized) < 3:
-        return "Title number must contain at least 3 alphanumeric characters"
-    if len(normalized) > 20:
-        return "Title number cannot exceed 20 alphanumeric characters"
-    return None
-
-
-def _compute_vin_check_digit(vin: str) -> str:
-    total = 0
-    for index, character in enumerate(vin):
-        total += VIN_TRANSLITERATION[character] * VIN_WEIGHTS[index]
-    remainder = total % 11
-    return "X" if remainder == 10 else str(remainder)
-
-
-def validate_vin(vin: str) -> Optional[str]:
-    normalized = vin.strip().upper()
-    if len(normalized) != 17:
-        return "VIN must be exactly 17 characters"
-    if any(character not in VIN_ALLOWED for character in normalized):
-        return "VIN contains invalid characters"
-    expected_check_digit = _compute_vin_check_digit(normalized)
-    if normalized[8] != expected_check_digit:
-        return "VIN check digit is invalid"
-    return None
-
-
-def validate_vehicle_year(vehicle_year: int) -> Optional[str]:
-    current_year = datetime.utcnow().year
-    if vehicle_year < 1886:
-        return "Vehicle year cannot be earlier than 1886"
-    if vehicle_year > current_year + 1:
-        return "Vehicle year cannot be more than one year in the future"
-    return None
-
-
-def validate_record(
-    title_number: str,
-    vin: str,
-    vehicle_year: int,
-) -> List[str]:
-    errors: List[str] = []
-    for validator, value in (
-        (validate_title_number, title_number),
-        (validate_vin, vin),
-        (validate_vehicle_year, vehicle_year),
-    ):
-        error = validator(value)
-        if error:
-            errors.append(error)
-    return errors
 
 
 def insert_title_record(
