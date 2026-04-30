@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import io
 import json
@@ -708,8 +709,8 @@ def _sha256(data: bytes) -> str:
 
 
 def _normalize_csv_header(header: str) -> str:
-    """Lower-case, strip, and remove non-alphanumeric/space chars from a CSV header."""
-    return re.sub(r"[^a-z0-9 ]", "", header.lower().strip()).strip()
+    """Lower-case and remove non-alphanumeric/space chars from a CSV header."""
+    return re.sub(r"[^a-z0-9 ]", "", header.lower()).strip()
 
 
 def _auto_map_csv_headers(headers: List[str]) -> Dict[str, Optional[str]]:
@@ -1597,9 +1598,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         except UnicodeDecodeError:
             text = file_bytes.decode("latin-1")
 
-        import csv as _csv_mod
-
-        reader = _csv_mod.DictReader(io.StringIO(text))
+        reader = csv.DictReader(io.StringIO(text))
         headers = list(reader.fieldnames or [])
         if not headers:
             return render_template(
@@ -1659,7 +1658,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
 
         uploads_real = os.path.realpath(UPLOADS_DIR)
         tmp_path = os.path.realpath(os.path.join(UPLOADS_DIR, tmp_name))
-        if not tmp_path.startswith(uploads_real + os.sep):
+        if os.path.commonpath([uploads_real, tmp_path]) != uploads_real:
             return render_template(
                 "import_csv.html",
                 step="upload",
@@ -1683,9 +1682,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
         except UnicodeDecodeError:
             text = raw.decode("latin-1")
 
-        import csv as _csv_mod
-
-        reader = _csv_mod.DictReader(io.StringIO(text))
+        reader = csv.DictReader(io.StringIO(text))
         headers = list(reader.fieldnames or [])
 
         # Build mapping from form data: col_<index> = db_field_name_or_empty.
