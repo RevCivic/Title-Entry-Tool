@@ -41,13 +41,12 @@ DEFAULT_AI_CONFIDENCE_THRESHOLD = 0.6
 # Maximum image dimension sent to the model (pixels on the longer side).
 _MAX_IMAGE_DIMENSION = 2000
 
-# All fields extracted by the AI (core + extended).
-_CORE_FIELDS = ("state", "title_number", "vin", "vehicle_year")
-_EXTENDED_FIELDS = (
-    "make", "model", "body_style", "color", "odometer",
-    "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
+# All fields extracted by the AI – imported from the canonical model definition.
+from app.models.title_record import (
+    CORE_FIELDS as _CORE_FIELDS,
+    EXTENDED_FIELDS as _EXTENDED_FIELDS,
+    ALL_FIELDS as _ALL_FIELDS,
 )
-_ALL_FIELDS: Tuple[str, ...] = _CORE_FIELDS + _EXTENDED_FIELDS
 
 # ---------------------------------------------------------------------------
 # State template loader

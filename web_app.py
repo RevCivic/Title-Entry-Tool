@@ -22,6 +22,7 @@ from ai_extraction import (
     extract_fields_with_ai,
     invalidate_template_cache,
 )
+from app.models.title_record import OPERATIONAL_FIELDS as _OPERATIONAL_FIELDS
 from barcode_scanner import scan_barcodes
 from image_preprocessing import binarize_image, preprocess_title_image
 from title_entry_tool import (
@@ -71,20 +72,6 @@ except ValueError:
 
 # All field names recognised by the extraction pipeline (core + extended).
 _FIELD_NAMES: Tuple[str, ...] = AI_ALL_FIELDS
-
-# Operational fields manually entered by staff (never AI-extracted).
-_OPERATIONAL_FIELDS: Tuple[str, ...] = (
-    "provider_id",
-    "state_of_plant",
-    "dismantler_license",
-    "plant_name",
-    "description",
-    "condition",
-    "stock_number",
-    "location_status",
-    "purchased_from",
-    "sold_to",
-)
 
 # AI readiness cache – avoids a network probe on every page load.
 _AI_STATUS_CACHE: Dict[str, object] = {"status": "unknown", "checked_at": 0.0}
@@ -872,11 +859,9 @@ def get_port_from_environment(default_port: int = DEFAULT_PORT) -> int:
 # ── LLM prompt-tuning ────────────────────────────────────────────────────────
 
 # Canonical field order used by the Modelfile few-shot examples.
-_LLM_FIELDS: Tuple[str, ...] = (
-    "state", "title_number", "vin", "vehicle_year", "make", "model",
-    "body_style", "color", "odometer", "owner_name", "owner_address",
-    "purchase_price", "sale_date", "issue_date",
-)
+# AI_ALL_FIELDS is imported from ai_extraction (which re-exports it from
+# app.models.title_record.ALL_FIELDS) – the single source of truth.
+_LLM_FIELDS: Tuple[str, ...] = AI_ALL_FIELDS
 
 # Maximum number of few-shot MESSAGE pairs written into the Modelfile.
 _LLM_MAX_EXAMPLES = 30
