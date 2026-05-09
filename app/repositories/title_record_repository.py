@@ -14,7 +14,7 @@ from app.models.title_record import ALL_FIELDS, OPERATIONAL_FIELDS, TitleRecord,
 class TitleRecordRepository:
     """Encapsulate database operations for :class:`TitleRecord`."""
 
-    UPDATABLE_FIELDS = frozenset(ALL_FIELDS + OPERATIONAL_FIELDS)
+    UPDATABLE_FIELDS = frozenset(set(ALL_FIELDS) | set(OPERATIONAL_FIELDS))
 
     def __init__(self, connection: psycopg2.extensions.connection) -> None:
         self.connection = connection
@@ -181,9 +181,12 @@ class TitleRecordRepository:
 
     @staticmethod
     def _normalize(record: TitleRecord) -> TitleRecord:
+        state = (record.state or "").strip().upper()
+        title_number = _normalize_title_number(record.title_number or "")
+        vin = (record.vin or "").strip().upper()
         return replace(
             record,
-            state=record.state.strip().upper(),
-            title_number=_normalize_title_number(record.title_number),
-            vin=record.vin.strip().upper(),
+            state=state,
+            title_number=title_number,
+            vin=vin,
         )
