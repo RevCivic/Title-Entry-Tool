@@ -14,7 +14,7 @@ from app.models.title_record import ALL_FIELDS, OPERATIONAL_FIELDS, TitleRecord,
 class TitleRecordRepository:
     """Encapsulate database operations for :class:`TitleRecord`."""
 
-    UPDATABLE_FIELDS = frozenset((*ALL_FIELDS, *OPERATIONAL_FIELDS))
+    USER_UPDATABLE_FIELDS = frozenset((*ALL_FIELDS, *OPERATIONAL_FIELDS))
 
     def __init__(self, connection: psycopg2.extensions.connection) -> None:
         self.connection = connection
@@ -116,10 +116,12 @@ class TitleRecordRepository:
             rows = cursor.fetchall()
         return [TitleRecord.from_dict(dict(row)) for row in rows]
 
-    def update_fields(self, record_id: int, fields: Dict[str, Any]) -> None:
-        safe_fields = {key: value for key, value in fields.items() if key in self.UPDATABLE_FIELDS}
+    def update_fields(self, record_id: int, fields: Dict[str, Any]) -> bool:
+        safe_fields = {
+            key: value for key, value in fields.items() if key in self.USER_UPDATABLE_FIELDS
+        }
         if not safe_fields:
-            return
+            return False
 
         set_clauses = [
             psycopg2.sql.SQL("{} = %s").format(psycopg2.sql.Identifier(key))
@@ -133,7 +135,7 @@ class TitleRecordRepository:
             cursor.execute(query, list(safe_fields.values()) + [record_id])
             if cursor.rowcount == 0:
                 self.connection.commit()
-                return
+                return False
 
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -141,6 +143,9 @@ class TitleRecordRepository:
                 (record_id,),
             )
             row = cursor.fetchone()
+        if row is None:
+            self.connection.commit()
+            return False
         title_number, vin, vehicle_year = row
         validation_errors = TitleRecord(
             title_number=title_number or "",
@@ -161,6 +166,7 @@ class TitleRecordRepository:
                 ),
             )
         self.connection.commit()
+        return True
 
     def find_duplicate(self, state: str, title_number: str, vin: str) -> Optional[int]:
         with self.connection.cursor() as cursor:
