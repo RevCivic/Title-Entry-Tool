@@ -10,6 +10,9 @@ import psycopg2.extensions
 import psycopg2.extras
 import psycopg2.sql
 
+from app.models import TitleRecord
+from app.repositories import TitleRecordRepository
+
 # VIN validation constants and all field-level validators are the single source
 # of truth in the TitleRecord model; import them here for backward compatibility.
 from app.models.title_record import (
@@ -245,77 +248,43 @@ def insert_title_record(
     state_layout_version: Optional[str] = None,
     source_file_path: Optional[str] = None,
 ) -> Dict[str, object]:
-    normalized_title_number = _normalize_title_number(title_number)
-    normalized_vin = vin.strip().upper()
-    errors = validate_record(normalized_title_number, normalized_vin, vehicle_year)
-    validation_errors = " | ".join(errors) if errors else None
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO title_records (
-                state, title_number, vin, vehicle_year,
-                make, model, body_style, color, odometer,
-                owner_name, owner_address, purchase_price,
-                sale_date, issue_date,
-                provider_id, state_of_plant, dismantler_license, plant_name,
-                description, condition, stock_number, location_status,
-                purchased_from, sold_to, sort_order,
-                state_layout_version, source_file_path, ocr_text,
-                is_validated, validation_errors, created_at
-            ) VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s
-            )
-            RETURNING id
-            """,
-            (
-                state.strip().upper(),
-                normalized_title_number,
-                normalized_vin,
-                vehicle_year,
-                make,
-                model,
-                body_style,
-                color,
-                odometer,
-                owner_name,
-                owner_address,
-                purchase_price,
-                sale_date,
-                issue_date,
-                provider_id,
-                state_of_plant,
-                dismantler_license,
-                plant_name,
-                description,
-                condition,
-                stock_number,
-                location_status,
-                purchased_from,
-                sold_to,
-                sort_order,
-                state_layout_version,
-                source_file_path,
-                ocr_text,
-                0 if errors else 1,
-                validation_errors,
-                datetime.utcnow().isoformat(),
-            ),
+    repository = TitleRecordRepository(connection)
+    record = repository.create(
+        TitleRecord(
+            state=state,
+            title_number=title_number,
+            vin=vin,
+            vehicle_year=vehicle_year,
+            make=make,
+            model=model,
+            body_style=body_style,
+            color=color,
+            odometer=odometer,
+            owner_name=owner_name,
+            owner_address=owner_address,
+            purchase_price=purchase_price,
+            sale_date=sale_date,
+            issue_date=issue_date,
+            provider_id=provider_id,
+            state_of_plant=state_of_plant,
+            dismantler_license=dismantler_license,
+            plant_name=plant_name,
+            description=description,
+            condition=condition,
+            stock_number=stock_number,
+            location_status=location_status,
+            purchased_from=purchased_from,
+            sold_to=sold_to,
+            sort_order=sort_order,
+            state_layout_version=state_layout_version,
+            source_file_path=source_file_path,
+            ocr_text=ocr_text,
         )
-        row_id = cursor.fetchone()[0]
-    connection.commit()
+    )
     return {
-        "id": row_id,
-        "is_validated": not errors,
-        "validation_errors": errors,
+        "id": record.id,
+        "is_validated": record.is_validated,
+        "validation_errors": record.validation_errors,
     }
 
 
@@ -425,13 +394,8 @@ def get_record_by_id(
     connection: psycopg2.extensions.connection, record_id: int
 ) -> Optional[Dict[str, Any]]:
     """Return a title record as a dict, or None if not found."""
-    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-        cursor.execute(
-            "SELECT * FROM title_records WHERE id = %s",
-            (record_id,),
-        )
-        row = cursor.fetchone()
-    return dict(row) if row else None
+    record = TitleRecordRepository(connection).get_by_id(record_id)
+    return record.to_dict() if record else None
 
 
 def list_records(
@@ -440,19 +404,10 @@ def list_records(
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
     """Return a page of title records ordered by id DESC (newest first)."""
-    with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
-        cursor.execute(
-            """
-            SELECT id, state, title_number, vin, vehicle_year,
-                   make, model, color, is_validated, created_at,
-                   stock_number, location_status, sort_order
-            FROM title_records
-            ORDER BY id DESC
-            LIMIT %s OFFSET %s
-            """,
-            (limit, offset),
-        )
-        return [dict(r) for r in cursor.fetchall()]
+    return [
+        record.to_dict()
+        for record in TitleRecordRepository(connection).list(limit=limit, offset=offset)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -538,64 +493,13 @@ def list_ground_truth_corrections(
         return [dict(r) for r in cursor.fetchall()]
 
 
-# Columns of title_records that may be updated via manual corrections.
-_UPDATABLE_RECORD_FIELDS = frozenset({
-    "state", "title_number", "vin", "vehicle_year",
-    "make", "model", "body_style", "color", "odometer",
-    "owner_name", "owner_address", "purchase_price", "sale_date", "issue_date",
-    "provider_id", "state_of_plant", "dismantler_license", "plant_name",
-    "description", "condition", "stock_number", "location_status",
-    "purchased_from", "sold_to",
-})
-
-
 def update_title_record_fields(
     connection: psycopg2.extensions.connection,
     record_id: int,
     fields: Dict[str, Any],
 ) -> None:
     """Overwrite specific columns of a title record and re-validate it."""
-    safe_fields = {k: v for k, v in fields.items() if k in _UPDATABLE_RECORD_FIELDS}
-    if not safe_fields:
-        return
-
-    set_clauses = [
-        psycopg2.sql.SQL("{} = %s").format(psycopg2.sql.Identifier(k))
-        for k in safe_fields
-    ]
-    query = psycopg2.sql.SQL(
-        "UPDATE title_records SET {} WHERE id = %s"
-    ).format(psycopg2.sql.SQL(", ").join(set_clauses))
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, list(safe_fields.values()) + [record_id])
-
-    # Re-validate and persist the updated validation state.
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT title_number, vin, vehicle_year FROM title_records WHERE id = %s",
-            (record_id,),
-        )
-        row = cursor.fetchone()
-    if row:
-        title_number, vin, vehicle_year = row
-        errors = validate_record(
-            title_number or "",
-            vin or "",
-            vehicle_year or 0,
-        )
-        validation_errors = " | ".join(errors) if errors else None
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE title_records
-                SET is_validated = %s, validation_errors = %s
-                WHERE id = %s
-                """,
-                (0 if errors else 1, validation_errors, record_id),
-            )
-
-    connection.commit()
+    TitleRecordRepository(connection).update_fields(record_id, fields)
 
 
 def update_record_sort_orders(
@@ -909,21 +813,7 @@ def find_duplicate_record(
     Returns ``None`` when no duplicate exists.  The comparison is
     case-insensitive (all values are upper-cased before querying).
     """
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT id FROM title_records
-            WHERE state = %s AND title_number = %s AND vin = %s
-            LIMIT 1
-            """,
-            (
-                state.strip().upper(),
-                title_number.strip().upper(),
-                vin.strip().upper(),
-            ),
-        )
-        row = cursor.fetchone()
-    return int(row[0]) if row else None
+    return TitleRecordRepository(connection).find_duplicate(state, title_number, vin)
 
 
 # ---------------------------------------------------------------------------
