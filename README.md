@@ -20,6 +20,8 @@ from title_entry_tool import (
     create_connection_from_env, initialize_database,
     insert_title_record, export_validated_to_csv
 )
+from app.models import TitleRecord
+from app.repositories import TitleRecordRepository
 
 connection = create_connection_from_env()
 initialize_database(connection)
@@ -31,6 +33,19 @@ insert_title_record(
     owner_name="JANE DOE", owner_address="123 MAIN ST",
 )
 export_validated_to_csv(connection, "nmvitis_upload.csv")
+
+repository = TitleRecordRepository(connection)
+saved = repository.create(
+    TitleRecord(
+        state="NM",
+        title_number="ABC-1234",
+        vin="1HGCM82633A004352",
+        vehicle_year=2003,
+        make="HONDA",
+        model="ACCORD",
+    )
+)
+assert saved.id is not None
 ```
 
 ### Environment variables
@@ -346,5 +361,4 @@ docker compose exec ollama ollama list
 ```bash
 python -m unittest discover -s tests -v
 ```
-
 

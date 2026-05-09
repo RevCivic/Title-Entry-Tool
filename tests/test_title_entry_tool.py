@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
+from app.models import TitleRecord
+from app.repositories import TitleRecordRepository
 from title_entry_tool import (
     export_validated_to_csv,
     find_duplicate_record,
@@ -202,6 +204,45 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual("In Yard", params[21])       # location_status
         self.assertEqual("ABC Auction", params[22])   # purchased_from
         self.assertEqual("Recycler LLC", params[23])  # sold_to
+
+    def test_title_record_repository_create_returns_normalized_model(self) -> None:
+        connection, _ = _make_connection(fetchone_return=(123,))
+        repository = TitleRecordRepository(connection)
+
+        saved = repository.create(
+            TitleRecord(
+                state="nm",
+                title_number="abc-1234",
+                vin="1hgcm82633a004352",
+                vehicle_year=2003,
+            )
+        )
+
+        self.assertEqual(123, saved.id)
+        self.assertEqual("NM", saved.state)
+        self.assertEqual("ABC1234", saved.title_number)
+        self.assertEqual("1HGCM82633A004352", saved.vin)
+        self.assertTrue(saved.is_validated)
+
+    def test_title_record_repository_get_by_id_returns_model(self) -> None:
+        fake_row = {
+            "id": 5,
+            "state": "NM",
+            "title_number": "ABC1234",
+            "vin": "1HGCM82633A004352",
+            "vehicle_year": 2003,
+            "is_validated": 1,
+            "validation_errors": None,
+            "created_at": "2024-01-01T00:00:00",
+        }
+        connection, _ = _make_connection(fetchone_return=fake_row)
+
+        record = TitleRecordRepository(connection).get_by_id(5)
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(5, record.id)
+        self.assertEqual("ABC1234", record.title_number)
 
     def test_update_record_sort_orders_executes_updates(self) -> None:
         connection, cursor = _make_connection()
