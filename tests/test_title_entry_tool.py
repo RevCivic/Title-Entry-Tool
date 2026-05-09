@@ -223,6 +223,7 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertEqual("ABC1234", saved.title_number)
         self.assertEqual("1HGCM82633A004352", saved.vin)
         self.assertTrue(saved.is_validated)
+        connection.commit.assert_called_once()
 
     def test_title_record_repository_get_by_id_returns_model(self) -> None:
         fake_row = {
@@ -242,6 +243,13 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertIsNotNone(record)
         self.assertEqual(5, record.id)
         self.assertEqual("ABC1234", record.title_number)
+
+    def test_title_record_repository_get_by_id_returns_none_when_missing(self) -> None:
+        connection, _ = _make_connection(fetchone_explicit_none=True)
+
+        record = TitleRecordRepository(connection).get_by_id(999)
+
+        self.assertIsNone(record)
 
     def test_update_record_sort_orders_executes_updates(self) -> None:
         connection, cursor = _make_connection()
