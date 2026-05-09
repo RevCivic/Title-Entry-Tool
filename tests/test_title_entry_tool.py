@@ -240,7 +240,6 @@ class TitleEntryToolTests(unittest.TestCase):
         record = TitleRecordRepository(connection).get_by_id(5)
 
         self.assertIsNotNone(record)
-        assert record is not None
         self.assertEqual(5, record.id)
         self.assertEqual("ABC1234", record.title_number)
 

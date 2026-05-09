@@ -14,7 +14,7 @@ from app.models.title_record import ALL_FIELDS, OPERATIONAL_FIELDS, TitleRecord,
 class TitleRecordRepository:
     """Encapsulate database operations for :class:`TitleRecord`."""
 
-    UPDATABLE_FIELDS = frozenset(set(ALL_FIELDS) | set(OPERATIONAL_FIELDS))
+    UPDATABLE_FIELDS = frozenset((*ALL_FIELDS, *OPERATIONAL_FIELDS))
 
     def __init__(self, connection: psycopg2.extensions.connection) -> None:
         self.connection = connection
@@ -131,6 +131,9 @@ class TitleRecordRepository:
 
         with self.connection.cursor() as cursor:
             cursor.execute(query, list(safe_fields.values()) + [record_id])
+            if cursor.rowcount == 0:
+                self.connection.commit()
+                return
 
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -138,9 +141,6 @@ class TitleRecordRepository:
                 (record_id,),
             )
             row = cursor.fetchone()
-        if not row:
-            self.connection.commit()
-            return
         title_number, vin, vehicle_year = row
         validation_errors = TitleRecord(
             title_number=title_number or "",
