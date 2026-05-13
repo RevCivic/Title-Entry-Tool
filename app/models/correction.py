@@ -15,6 +15,7 @@ class Correction:
     id: Optional[int] = None
     record_id: Optional[int] = None
     image_hash: Optional[str] = None
+    image_id: Optional[int] = None
     field_name: str = ""
     original_value: Optional[str] = None
     corrected_value: Optional[str] = None
@@ -28,6 +29,7 @@ class Correction:
             "id": self.id,
             "record_id": self.record_id,
             "image_hash": self.image_hash,
+            "image_id": self.image_id,
             "field_name": self.field_name,
             "original_value": self.original_value,
             "corrected_value": self.corrected_value,
@@ -42,6 +44,7 @@ class Correction:
             id=d.get("id"),
             record_id=d.get("record_id"),
             image_hash=d.get("image_hash"),
+            image_id=d.get("image_id"),
             field_name=d.get("field_name") or "",
             original_value=d.get("original_value"),
             corrected_value=d.get("corrected_value"),

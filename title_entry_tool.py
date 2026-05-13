@@ -12,10 +12,12 @@ import psycopg2.sql
 
 from app.models import TitleRecord
 from app.models.title_back_record import TitleBackRecord
+from app.models.title_image import TitleImage
 from app.models.training_run import TrainingRun
 from app.repositories import (
     CorrectionRepository,
     TitleBackRecordRepository,
+    TitleImageRepository,
     TitleRecordRepository,
     TrainingRunRepository,
 )
@@ -222,6 +224,65 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
             )
             """
         )
+
+        # Image reference table – decouples file/document storage from title data.
+        # Each row represents one uploaded file associated with a title record.
+        # A title may have multiple images (e.g. original PDF + rendered preview).
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS title_images (
+                id SERIAL PRIMARY KEY,
+                title_record_id INTEGER NOT NULL REFERENCES title_records(id) ON DELETE CASCADE,
+                file_path TEXT NOT NULL,
+                file_hash TEXT,
+                mime_type TEXT,
+                original_filename TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS title_images_title_record_id_idx
+            ON title_images(title_record_id)
+            """
+        )
+
+        # Add image_id FK to corrections (idempotent for existing deployments).
+        cursor.execute(
+            """
+            ALTER TABLE corrections
+            ADD COLUMN IF NOT EXISTS image_id INTEGER REFERENCES title_images(id)
+            """
+        )
+
+        # ---------------------------------------------------------------------------
+        # Backfill: populate title_images from title_records.source_file_path for
+        # records that pre-date this table (runs only for rows not yet backfilled).
+        # ---------------------------------------------------------------------------
+        cursor.execute(
+            """
+            INSERT INTO title_images (title_record_id, file_path, created_at)
+            SELECT r.id, r.source_file_path, COALESCE(r.created_at, '')
+            FROM title_records r
+            WHERE r.source_file_path IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM title_images ti WHERE ti.title_record_id = r.id
+              )
+            """
+        )
+
+        # Backfill corrections.image_id from corrections.image_hash (which stored
+        # the file path before the image reference table existed).
+        cursor.execute(
+            """
+            UPDATE corrections c
+            SET image_id = ti.id
+            FROM title_images ti
+            WHERE c.image_hash = ti.file_path
+              AND c.image_id IS NULL
+            """
+        )
     connection.commit()
 
 
@@ -289,10 +350,24 @@ def insert_title_record(
             ocr_text=ocr_text,
         )
     )
+
+    # When a source file is provided, create the image reference record that
+    # normalises file/document storage away from the title-data table.
+    image_id: Optional[int] = None
+    if source_file_path and record.id is not None:
+        img = TitleImageRepository(connection).create(
+            TitleImage(
+                title_record_id=record.id,
+                file_path=source_file_path,
+            )
+        )
+        image_id = img.id
+
     return {
         "id": record.id,
         "is_validated": record.is_validated,
         "validation_errors": record.validation_errors,
+        "image_id": image_id,
     }
 
 
@@ -430,6 +505,7 @@ def insert_correction(
     original_value: Optional[str],
     corrected_value: Optional[str],
     image_hash: Optional[str] = None,
+    image_id: Optional[int] = None,
     is_ground_truth: bool = False,
 ) -> int:
     """Record a field-level correction for a title record.
@@ -442,6 +518,7 @@ def insert_correction(
         original_value=original_value,
         corrected_value=corrected_value,
         image_hash=image_hash,
+        image_id=image_id,
         is_ground_truth=is_ground_truth,
     )
     return correction.id  # type: ignore[return-value]
@@ -709,6 +786,46 @@ def find_duplicate_record(
     case-insensitive (all values are upper-cased before querying).
     """
     return TitleRecordRepository(connection).find_duplicate(state, title_number, vin)
+
+
+# ---------------------------------------------------------------------------
+# Image reference records
+# ---------------------------------------------------------------------------
+
+
+def insert_title_image(
+    connection: psycopg2.extensions.connection,
+    title_record_id: int,
+    file_path: str,
+    file_hash: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    original_filename: Optional[str] = None,
+) -> int:
+    """Create an image reference record for a title and return its ``id``.
+
+    This is a low-level helper used when the image reference needs to be
+    created independently of ``insert_title_record`` (e.g. when attaching
+    additional rendered page previews to an existing record).
+    """
+    img = TitleImageRepository(connection).create(
+        TitleImage(
+            title_record_id=title_record_id,
+            file_path=file_path,
+            file_hash=file_hash,
+            mime_type=mime_type,
+            original_filename=original_filename,
+        )
+    )
+    return img.id  # type: ignore[return-value]
+
+
+def get_title_image_for_record(
+    connection: psycopg2.extensions.connection,
+    title_record_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Return the most recent image reference for a title record, or None."""
+    img = TitleImageRepository(connection).get_for_record(title_record_id)
+    return img.to_dict() if img else None
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ instead of the full submodule path.
 
 from app.models.correction import Correction
 from app.models.title_back_record import TitleBackRecord
+from app.models.title_image import TitleImage
 from app.models.title_record import (
     ALL_FIELDS,
     CORE_FIELDS,
@@ -27,6 +28,7 @@ __all__ = [
     "TitleRecord",
     "Correction",
     "TitleBackRecord",
+    "TitleImage",
     "TrainingRun",
     "CORE_FIELDS",
     "EXTENDED_FIELDS",
