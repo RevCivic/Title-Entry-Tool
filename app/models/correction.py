@@ -20,6 +20,8 @@ class Correction:
     corrected_value: Optional[str] = None
     is_ground_truth: bool = False
     created_at: str = ""
+    # Populated by joins when fetching ground-truth corrections for export/training.
+    source_file_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -31,6 +33,7 @@ class Correction:
             "corrected_value": self.corrected_value,
             "is_ground_truth": self.is_ground_truth,
             "created_at": self.created_at,
+            "source_file_path": self.source_file_path,
         }
 
     @classmethod
@@ -44,4 +47,5 @@ class Correction:
             corrected_value=d.get("corrected_value"),
             is_ground_truth=bool(d.get("is_ground_truth")),
             created_at=d.get("created_at") or "",
+            source_file_path=d.get("source_file_path"),
         )
