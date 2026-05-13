@@ -263,7 +263,8 @@ def initialize_database(connection: psycopg2.extensions.connection) -> None:
         cursor.execute(
             """
             INSERT INTO title_images (title_record_id, file_path, created_at)
-            SELECT r.id, r.source_file_path, COALESCE(r.created_at, '')
+            SELECT r.id, r.source_file_path,
+                   COALESCE(NULLIF(r.created_at, ''), TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'))
             FROM title_records r
             WHERE r.source_file_path IS NOT NULL
               AND NOT EXISTS (
