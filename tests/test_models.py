@@ -247,6 +247,7 @@ class CorrectionModelTests(unittest.TestCase):
         c = Correction()
         self.assertEqual("", c.field_name)
         self.assertFalse(c.is_ground_truth)
+        self.assertIsNone(c.source_file_path)
 
     def test_round_trip(self) -> None:
         c = Correction(
@@ -257,6 +258,15 @@ class CorrectionModelTests(unittest.TestCase):
         self.assertEqual(c.id, restored.id)
         self.assertEqual(c.corrected_value, restored.corrected_value)
         self.assertTrue(restored.is_ground_truth)
+
+    def test_source_file_path_round_trips(self) -> None:
+        c = Correction(id=2, record_id=7, field_name="make", source_file_path="/app/data/abc.png")
+        restored = Correction.from_dict(c.to_dict())
+        self.assertEqual("/app/data/abc.png", restored.source_file_path)
+
+    def test_to_dict_includes_source_file_path(self) -> None:
+        c = Correction(source_file_path="/some/path.jpg")
+        self.assertIn("source_file_path", c.to_dict())
 
 
 class TitleBackRecordModelTests(unittest.TestCase):
