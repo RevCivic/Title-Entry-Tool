@@ -1,5 +1,6 @@
 """Repository for persisting and retrieving back-of-title records."""
 
+from dataclasses import replace
 from datetime import datetime
 from typing import Optional
 
@@ -55,7 +56,6 @@ class TitleBackRecordRepository:
             )
             back_id = cursor.fetchone()[0]
         self.connection.commit()
-        from dataclasses import replace
         return replace(record, id=back_id, created_at=created_at)
 
     def get_by_title_record_id(self, title_record_id: int) -> Optional[TitleBackRecord]:

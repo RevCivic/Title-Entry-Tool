@@ -1,5 +1,6 @@
 """Repository for persisting and retrieving training-run records."""
 
+from dataclasses import replace
 from datetime import datetime
 from typing import List
 
@@ -29,7 +30,6 @@ class TrainingRunRepository:
             )
             run_id = cursor.fetchone()[0]
         self.connection.commit()
-        from dataclasses import replace
         return replace(run, id=run_id, exported_at=exported_at)
 
     def list(self) -> List[TrainingRun]:
