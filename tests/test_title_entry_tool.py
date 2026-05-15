@@ -13,10 +13,12 @@ from title_entry_tool import (
     get_annotation_queue,
     get_app_setting,
     get_record_by_id,
+    get_title_image_for_record,
     get_training_stats,
     initialize_database,
     insert_correction,
     insert_title_back_record,
+    insert_title_image,
     insert_title_record,
     insert_training_run,
     list_model_definitions,
@@ -74,10 +76,12 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertTrue(result["is_validated"])
         self.assertEqual(42, result["id"])
         self.assertEqual([], result["validation_errors"])
+        # No source_file_path → no title_images row → image_id is None
+        self.assertIsNone(result["image_id"])
         connection.commit.assert_called_once()
 
         # Verify normalized values were passed to the INSERT
-        call_args = cursor.execute.call_args
+        call_args = cursor.execute.call_args_list[0]
         params = call_args[0][1]
         self.assertEqual("NM", params[0])
         self.assertEqual("ABC1234", params[1])
@@ -103,11 +107,43 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertTrue(
             any("VIN must be exactly 17 characters" in e for e in result["validation_errors"])
         )
+        self.assertIsNone(result["image_id"])
 
-        call_args = cursor.execute.call_args
+        call_args = cursor.execute.call_args_list[0]
         params = call_args[0][1]
         self.assertEqual(0, params[28])  # is_validated
         self.assertIn("VIN must be exactly 17 characters", params[29])  # validation_errors
+
+    def test_insert_title_record_creates_image_record_when_source_file_path_given(self) -> None:
+        """When source_file_path is provided a title_images row must be created."""
+        # Two consecutive fetchone calls: first for title_records (id=55),
+        # second for title_images (id=3).
+        cursor = mock.MagicMock()
+        cursor.fetchone.side_effect = [(55,), (3,)]
+        cursor.fetchall.return_value = []
+        cm = mock.MagicMock()
+        cm.__enter__ = mock.Mock(return_value=cursor)
+        cm.__exit__ = mock.Mock(return_value=False)
+        connection = mock.MagicMock()
+        connection.cursor.return_value = cm
+
+        result = insert_title_record(
+            connection,
+            state="NM",
+            title_number="abc-1234",
+            vin="1HGCM82633A004352",
+            vehicle_year=2003,
+            source_file_path="/app/data/uploads/abc.png",
+        )
+
+        self.assertEqual(55, result["id"])
+        self.assertEqual(3, result["image_id"])
+        # commit must be called twice: once for title_record, once for title_image
+        self.assertEqual(2, connection.commit.call_count)
+        # Two execute calls: title_records INSERT, title_images INSERT
+        sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any("INSERT INTO title_records" in s for s in sql_calls))
+        self.assertTrue(any("INSERT INTO title_images" in s for s in sql_calls))
 
     def test_export_validated_to_csv_only_exports_valid_records(self) -> None:
         fake_rows = [
@@ -160,7 +196,7 @@ class TitleEntryToolTests(unittest.TestCase):
         )
 
         self.assertTrue(result["is_validated"])
-        call_args = cursor.execute.call_args
+        call_args = cursor.execute.call_args_list[0]
         params = call_args[0][1]
         # Extended fields start at index 4 (after state, title_number, vin, vehicle_year)
         self.assertEqual("HONDA", params[4])   # make
@@ -191,7 +227,7 @@ class TitleEntryToolTests(unittest.TestCase):
         )
 
         self.assertTrue(result["is_validated"])
-        call_args = cursor.execute.call_args
+        call_args = cursor.execute.call_args_list[0]
         params = call_args[0][1]
         # Operational fields start at index 14 (after 14 NMVITIS fields)
         self.assertEqual("PROV01", params[14])       # provider_id
@@ -301,6 +337,52 @@ class TitleEntryToolTests(unittest.TestCase):
         connection.commit.assert_called_once()
         sql = cursor.execute.call_args[0][0]
         self.assertIn("INSERT INTO corrections", sql)
+        self.assertIn("image_id", sql)
+
+    def test_insert_correction_accepts_image_id(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(2,))
+        cid = insert_correction(
+            connection,
+            record_id=10,
+            field_name="make",
+            original_value="FORD",
+            corrected_value="HONDA",
+            image_id=7,
+        )
+        self.assertEqual(2, cid)
+        params = cursor.execute.call_args[0][1]
+        # image_id is at index 2 in INSERT params
+        self.assertEqual(7, params[2])
+
+    def test_insert_title_image_calls_execute(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(6,))
+        iid = insert_title_image(
+            connection,
+            title_record_id=42,
+            file_path="/app/data/uploads/abc.png",
+            mime_type="image/png",
+        )
+        self.assertEqual(6, iid)
+        connection.commit.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("INSERT INTO title_images", sql)
+
+    def test_get_title_image_for_record_returns_dict(self) -> None:
+        fake_row = {
+            "id": 9, "title_record_id": 42, "file_path": "/app/data/uploads/abc.png",
+            "file_hash": None, "mime_type": "image/png",
+            "original_filename": None, "created_at": "2024-01-01",
+        }
+        connection, _ = _make_connection(fetchone_return=fake_row)
+        result = get_title_image_for_record(connection, 42)
+        self.assertIsNotNone(result)
+        self.assertEqual(9, result["id"])
+        self.assertEqual("/app/data/uploads/abc.png", result["file_path"])
+
+    def test_get_title_image_for_record_returns_none_when_missing(self) -> None:
+        connection, _ = _make_connection(fetchone_explicit_none=True)
+        result = get_title_image_for_record(connection, 999)
+        self.assertIsNone(result)
 
     def test_insert_title_back_record_calls_execute(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(5,))
@@ -333,6 +415,7 @@ class TitleEntryToolTests(unittest.TestCase):
         self.assertIn("training_runs", all_sql)
         self.assertIn("app_settings", all_sql)
         self.assertIn("model_definitions", all_sql)
+        self.assertIn("title_images", all_sql)
 
     def test_update_title_record_fields_builds_update_sql(self) -> None:
         connection, cursor = _make_connection(fetchone_return=("TITLE123", "1HGCM82633A004352", 2003))

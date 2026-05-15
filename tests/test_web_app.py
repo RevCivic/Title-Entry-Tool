@@ -1103,6 +1103,7 @@ class ReviewRecordBulkApproveTests(unittest.TestCase):
 
     @mock.patch("web_app.update_title_record_fields")
     @mock.patch("web_app.insert_correction")
+    @mock.patch("web_app.get_title_image_for_record")
     @mock.patch("web_app.get_record_by_id")
     @mock.patch("web_app.initialize_database")
     @mock.patch("web_app.create_connection_from_env")
@@ -1111,6 +1112,7 @@ class ReviewRecordBulkApproveTests(unittest.TestCase):
         conn_mock: mock.Mock,
         _init_mock: mock.Mock,
         get_record_mock: mock.Mock,
+        get_image_mock: mock.Mock,
         insert_mock: mock.Mock,
         update_mock: mock.Mock,
     ) -> None:
@@ -1124,6 +1126,7 @@ class ReviewRecordBulkApproveTests(unittest.TestCase):
                                  "ocr_text", "is_validated", "validation_errors",
                                  "created_at")},
         }
+        get_image_mock.return_value = None
         insert_mock.return_value = 1
         client = self._app().test_client()
 

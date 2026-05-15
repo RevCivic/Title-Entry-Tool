@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.models.correction import Correction
 from app.models.title_back_record import TitleBackRecord
+from app.models.title_image import TitleImage
 from app.models.title_record import (
     ALL_FIELDS,
     CORE_FIELDS,
@@ -267,6 +268,69 @@ class CorrectionModelTests(unittest.TestCase):
     def test_to_dict_includes_source_file_path(self) -> None:
         c = Correction(source_file_path="/some/path.jpg")
         self.assertIn("source_file_path", c.to_dict())
+
+    def test_image_id_defaults_to_none(self) -> None:
+        c = Correction()
+        self.assertIsNone(c.image_id)
+
+    def test_image_id_round_trips(self) -> None:
+        c = Correction(id=3, record_id=8, field_name="vin", image_id=99)
+        restored = Correction.from_dict(c.to_dict())
+        self.assertEqual(99, restored.image_id)
+
+    def test_to_dict_includes_image_id(self) -> None:
+        c = Correction(image_id=42)
+        self.assertIn("image_id", c.to_dict())
+        self.assertEqual(42, c.to_dict()["image_id"])
+
+
+class TitleImageModelTests(unittest.TestCase):
+    def test_default_instance(self) -> None:
+        img = TitleImage()
+        self.assertIsNone(img.id)
+        self.assertIsNone(img.title_record_id)
+        self.assertEqual("", img.file_path)
+        self.assertIsNone(img.file_hash)
+        self.assertIsNone(img.mime_type)
+        self.assertIsNone(img.original_filename)
+        self.assertEqual("", img.created_at)
+
+    def test_round_trip(self) -> None:
+        img = TitleImage(
+            id=5, title_record_id=10,
+            file_path="/app/data/uploads/abc.png",
+            file_hash="deadbeef" * 8,
+            mime_type="image/png",
+            original_filename="title.png",
+            created_at="2024-05-01T12:00:00",
+        )
+        restored = TitleImage.from_dict(img.to_dict())
+        self.assertEqual(img.id, restored.id)
+        self.assertEqual(img.title_record_id, restored.title_record_id)
+        self.assertEqual(img.file_path, restored.file_path)
+        self.assertEqual(img.file_hash, restored.file_hash)
+        self.assertEqual(img.mime_type, restored.mime_type)
+        self.assertEqual(img.original_filename, restored.original_filename)
+        self.assertEqual(img.created_at, restored.created_at)
+
+    def test_to_dict_includes_all_keys(self) -> None:
+        img = TitleImage(title_record_id=1, file_path="/p.png")
+        d = img.to_dict()
+        for key in ("id", "title_record_id", "file_path", "file_hash",
+                    "mime_type", "original_filename", "created_at"):
+            self.assertIn(key, d)
+
+    def test_from_dict_handles_missing_optional_fields(self) -> None:
+        img = TitleImage.from_dict({"title_record_id": 3, "file_path": "/f.png"})
+        self.assertIsNone(img.id)
+        self.assertIsNone(img.file_hash)
+        self.assertIsNone(img.mime_type)
+        self.assertEqual("", img.created_at)
+
+    def test_from_dict_preserves_file_hash(self) -> None:
+        sha = "a" * 64
+        img = TitleImage.from_dict({"file_path": "/x.png", "file_hash": sha})
+        self.assertEqual(sha, img.file_hash)
 
 
 class TitleBackRecordModelTests(unittest.TestCase):

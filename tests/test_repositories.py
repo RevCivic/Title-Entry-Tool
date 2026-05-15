@@ -8,9 +8,11 @@ from unittest import mock
 
 from app.models.correction import Correction
 from app.models.title_back_record import TitleBackRecord
+from app.models.title_image import TitleImage
 from app.models.training_run import TrainingRun
 from app.repositories.correction_repository import CorrectionRepository
 from app.repositories.title_back_record_repository import TitleBackRecordRepository
+from app.repositories.title_image_repository import TitleImageRepository
 from app.repositories.training_run_repository import TrainingRunRepository
 from app.services.training_service import TrainingService
 
@@ -71,8 +73,9 @@ class CorrectionRepositoryCreateTests(unittest.TestCase):
             original_value=None, corrected_value="FORD", is_ground_truth=True,
         )
         params = cursor.execute.call_args[0][1]
-        # is_ground_truth is 6th positional param (0-indexed = 5)
-        self.assertEqual(1, params[5])
+        # Param order: record_id(0), image_hash(1), image_id(2), field_name(3),
+        #              original_value(4), corrected_value(5), is_ground_truth(6), created_at(7)
+        self.assertEqual(1, params[6])
 
     def test_create_with_image_hash(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(3,))
@@ -83,6 +86,18 @@ class CorrectionRepositoryCreateTests(unittest.TestCase):
         )
         self.assertEqual("/app/data/img.png", result.image_hash)
 
+    def test_create_with_image_id(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(4,))
+        result = CorrectionRepository(connection).create(
+            record_id=10, field_name="color",
+            original_value="BLUE", corrected_value="RED",
+            image_id=7,
+        )
+        self.assertEqual(7, result.image_id)
+        params = cursor.execute.call_args[0][1]
+        # image_id is at index 2 in the INSERT param list
+        self.assertEqual(7, params[2])
+
     def test_create_sql_inserts_into_corrections(self) -> None:
         connection, cursor = _make_connection(fetchone_return=(9,))
         CorrectionRepository(connection).create(
@@ -92,6 +107,7 @@ class CorrectionRepositoryCreateTests(unittest.TestCase):
         sql = cursor.execute.call_args[0][0]
         self.assertIn("INSERT INTO corrections", sql)
         self.assertIn("RETURNING id", sql)
+        self.assertIn("image_id", sql)
 
 
 class CorrectionRepositoryApproveTests(unittest.TestCase):
@@ -110,7 +126,7 @@ class CorrectionRepositoryListTests(unittest.TestCase):
     def test_list_for_record_returns_corrections(self) -> None:
         fake_rows = [
             {
-                "id": 1, "record_id": 42, "image_hash": None,
+                "id": 1, "record_id": 42, "image_hash": None, "image_id": None,
                 "field_name": "vin", "original_value": "BAD",
                 "corrected_value": _GOOD_VIN, "is_ground_truth": 1,
                 "created_at": "2024-01-01",
@@ -130,7 +146,7 @@ class CorrectionRepositoryListTests(unittest.TestCase):
     def test_list_ground_truth_joins_source_file_path(self) -> None:
         fake_rows = [
             {
-                "id": 2, "record_id": 5, "image_hash": None,
+                "id": 2, "record_id": 5, "image_hash": None, "image_id": 3,
                 "field_name": "make", "original_value": None,
                 "corrected_value": "FORD", "is_ground_truth": 1,
                 "created_at": "2024-02-01",
@@ -141,10 +157,95 @@ class CorrectionRepositoryListTests(unittest.TestCase):
         corrections = CorrectionRepository(connection).list_ground_truth()
         self.assertEqual(1, len(corrections))
         self.assertEqual("/app/data/uploads/abc.png", corrections[0].source_file_path)
-        # Verify the JOIN was part of the query
+        self.assertEqual(3, corrections[0].image_id)
+        # Verify the JOIN and COALESCE were part of the query
         sql = cursor.execute.call_args[0][0]
         self.assertIn("source_file_path", sql)
+        self.assertIn("title_images", sql)
         self.assertIn("is_ground_truth = 1", sql)
+
+
+# ---------------------------------------------------------------------------
+# TitleImageRepository tests
+# ---------------------------------------------------------------------------
+
+
+class TitleImageRepositoryCreateTests(unittest.TestCase):
+    def test_create_inserts_and_returns_image(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(8,))
+        repo = TitleImageRepository(connection)
+        result = repo.create(
+            TitleImage(
+                title_record_id=42,
+                file_path="/app/data/uploads/abc.png",
+                mime_type="image/png",
+            )
+        )
+        self.assertIsInstance(result, TitleImage)
+        self.assertEqual(8, result.id)
+        self.assertEqual(42, result.title_record_id)
+        self.assertEqual("/app/data/uploads/abc.png", result.file_path)
+        self.assertEqual("image/png", result.mime_type)
+        connection.commit.assert_called_once()
+
+    def test_create_sql_inserts_into_title_images(self) -> None:
+        connection, cursor = _make_connection(fetchone_return=(1,))
+        TitleImageRepository(connection).create(TitleImage(title_record_id=5, file_path="/p.png"))
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("INSERT INTO title_images", sql)
+        self.assertIn("RETURNING id", sql)
+
+    def test_create_sets_created_at_when_missing(self) -> None:
+        connection, _ = _make_connection(fetchone_return=(2,))
+        result = TitleImageRepository(connection).create(
+            TitleImage(title_record_id=3, file_path="/f.png")
+        )
+        self.assertNotEqual("", result.created_at)
+
+    def test_create_preserves_existing_created_at(self) -> None:
+        connection, _ = _make_connection(fetchone_return=(3,))
+        record = TitleImage(title_record_id=4, file_path="/f.png", created_at="2020-01-01T00:00:00")
+        result = TitleImageRepository(connection).create(record)
+        self.assertEqual("2020-01-01T00:00:00", result.created_at)
+
+
+class TitleImageRepositoryQueryTests(unittest.TestCase):
+    def test_get_for_record_returns_image(self) -> None:
+        fake_row = {
+            "id": 9, "title_record_id": 42, "file_path": "/app/data/uploads/abc.png",
+            "file_hash": None, "mime_type": "image/png",
+            "original_filename": "title.png", "created_at": "2024-05-01T12:00:00",
+        }
+        connection, _ = _make_connection(fetchone_return=fake_row)
+        result = TitleImageRepository(connection).get_for_record(42)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, TitleImage)
+        self.assertEqual(9, result.id)
+        self.assertEqual("/app/data/uploads/abc.png", result.file_path)
+
+    def test_get_for_record_returns_none_when_missing(self) -> None:
+        connection, _ = _make_connection(fetchone_explicit_none=True)
+        result = TitleImageRepository(connection).get_for_record(999)
+        self.assertIsNone(result)
+
+    def test_list_for_record_returns_images(self) -> None:
+        fake_rows = [
+            {"id": 3, "title_record_id": 10, "file_path": "/a.png",
+             "file_hash": None, "mime_type": None, "original_filename": None,
+             "created_at": "2024-01-02"},
+            {"id": 2, "title_record_id": 10, "file_path": "/b.pdf",
+             "file_hash": None, "mime_type": "application/pdf",
+             "original_filename": "title.pdf", "created_at": "2024-01-01"},
+        ]
+        connection, _ = _make_connection(cursor_rows=fake_rows)
+        images = TitleImageRepository(connection).list_for_record(10)
+        self.assertEqual(2, len(images))
+        self.assertIsInstance(images[0], TitleImage)
+        self.assertEqual("/a.png", images[0].file_path)
+
+    def test_list_for_record_returns_empty_when_none(self) -> None:
+        connection, _ = _make_connection(cursor_rows=[])
+        self.assertEqual([], TitleImageRepository(connection).list_for_record(99))
 
 
 # ---------------------------------------------------------------------------

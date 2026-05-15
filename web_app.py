@@ -34,11 +34,13 @@ from title_entry_tool import (
     get_corrections_for_record,
     get_record_by_id,
     get_title_back_record,
+    get_title_image_for_record,
     get_training_stats,
     import_nmvitis_rejections,
     initialize_database,
     insert_correction,
     insert_title_back_record,
+    insert_title_image,
     insert_title_record,
     insert_training_run,
     list_ground_truth_corrections,
@@ -1403,8 +1405,12 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                     or request.form.get("bulk_approve") == "1"
                 )
                 corrections_saved = 0
-                source_path = record.get("source_file_path") or ""
                 corrected_fields: Dict[str, Any] = {}
+
+                # Resolve image reference through the title_images table so that
+                # corrections carry a proper FK rather than a raw file path.
+                title_image = get_title_image_for_record(connection, record_id)
+                image_id = title_image["id"] if title_image else None
 
                 # AI-extractable fields go through the corrections/training workflow.
                 for field in _FIELD_NAMES:
@@ -1416,7 +1422,7 @@ def create_app(default_state: str = DEFAULT_STATE) -> Flask:
                             field_name=field,
                             original_value=str(record.get(field) or ""),
                             corrected_value=corrected,
-                            image_hash=source_path,
+                            image_id=image_id,
                             is_ground_truth=is_ground_truth,
                         )
                         corrected_fields[field] = corrected
